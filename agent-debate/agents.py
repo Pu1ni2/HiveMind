@@ -1,69 +1,57 @@
 import json
-import anthropic
-from config import CLAUDE_MODEL
+import re
+from openai import OpenAI
+from config import OPENROUTER_API_KEY, OPENROUTER_BASE_URL, MODEL
+from prompts import DYNAMIC_AGENT_PROMPT, EVALUATOR_AGENT_PROMPT
 
-client = anthropic.Anthropic()
+client = OpenAI(
+    base_url=OPENROUTER_BASE_URL,
+    api_key=OPENROUTER_API_KEY,
+)
 
 
-def call_da(task: str, history: list) -> dict:
-    """
-    Dynamic Agent: proposes or revises a plan.
-    Returns a dict with key 'plan' (list of sub-tasks).
-    """
-    system = (
-        "You are a Dynamic Agent (DA). Your job is to decompose a user task into a clear, "
-        "structured execution plan for sub-agents. "
-        "You must respond ONLY with valid JSON in this exact format:\n"
-        '{"plan": [{"id": 1, "role": "...", "objective": "..."}]}'
-    )
+def call_dynamic_agent(task: str, history: list) -> dict:
+    """Ask the Dynamic Agent to propose or revise a plan."""
+    messages = _build_messages(task, history, speaker="dynamic_agent")
+    messages.insert(0, {"role": "system", "content": DYNAMIC_AGENT_PROMPT})
 
-    messages = _build_messages(task, history, speaker="da")
-
-    response = client.messages.create(
-        model=CLAUDE_MODEL,
+    response = client.chat.completions.create(
+        model=MODEL,
         max_tokens=1024,
-        system=system,
         messages=messages,
     )
 
-    return json.loads(response.content[0].text)
+    return _parse_json(response.choices[0].message.content)
 
 
-def call_evaluator(task: str, history: list) -> dict:
-    """
-    Evaluator Agent: critiques or approves the DA's plan.
-    Returns a dict with 'approved' (bool) and optionally 'critique' (str).
-    """
-    system = (
-        "You are an Evaluator Agent. Your job is to critically review execution plans. "
-        "Check for: missing steps, ambiguous roles, edge cases not handled, and logical gaps. "
-        "You must respond ONLY with valid JSON in one of these two formats:\n"
-        '{"approved": true}\n'
-        'or\n'
-        '{"approved": false, "critique": "specific issues here"}'
-    )
+def call_evaluator_agent(task: str, history: list) -> dict:
+    """Ask the Evaluator Agent to critique or approve the plan."""
+    messages = _build_messages(task, history, speaker="evaluator_agent")
+    messages.insert(0, {"role": "system", "content": EVALUATOR_AGENT_PROMPT})
 
-    messages = _build_messages(task, history, speaker="evaluator")
-
-    response = client.messages.create(
-        model=CLAUDE_MODEL,
+    response = client.chat.completions.create(
+        model=MODEL,
         max_tokens=512,
-        system=system,
         messages=messages,
     )
 
-    return json.loads(response.content[0].text)
+    return _parse_json(response.choices[0].message.content)
+
+
+def _parse_json(text: str) -> dict:
+    """Extract JSON from model response, stripping markdown fences if present."""
+    text = text.strip()
+    match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
+    if match:
+        text = match.group(1)
+    return json.loads(text)
 
 
 def _build_messages(task: str, history: list, speaker: str) -> list:
-    """
-    Convert debate history into the message format Claude expects.
-    The 'speaker' param tells us whose turn it is next (so we frame context correctly).
-    """
+    """Convert debate history into OpenAI-compatible message format."""
     messages = [{"role": "user", "content": f"Task: {task}"}]
 
     for entry in history:
-        # Map debate roles to Claude's user/assistant alternation
         role = "assistant" if entry["role"] == speaker else "user"
         messages.append({"role": role, "content": entry["content"]})
 
