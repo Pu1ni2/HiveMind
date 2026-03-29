@@ -148,6 +148,46 @@
                 <div id="filePreview" class="fprev hidden"></div>
             </div>
 
+            <!-- Agent Detail page (RAG / interactive) -->
+            <div class="page" id="page-agent-detail">
+                <div class="pg-head">
+                    <button class="btn-back" id="agentDetailBack">&larr; Agents</button>
+                    <h2 id="agentDetailTitle"></h2>
+                    <span class="badge" id="agentTypeBadge"></span>
+                </div>
+                <div class="agent-detail-meta" id="agentDetailMeta"></div>
+
+                <!-- RAG Interface -->
+                <div id="ragSection" class="hidden">
+                    <div class="card">
+                        <div class="card-head"><h3>Upload Documents</h3><span class="badge bg-blue">RAG</span></div>
+                        <p class="card-sub">Upload PDFs, Excel, CSV, or text files. The agent will index them and answer questions based on the content.</p>
+                        <div class="rag-upload-zone" id="ragDropZone">
+                            <input type="file" id="ragFileInput" multiple accept=".pdf,.xlsx,.xls,.csv,.txt,.md,.json" hidden>
+                            <div class="rag-upload-icon">+</div>
+                            <div class="rag-upload-text">Drop files here or <span class="rag-upload-link">browse</span></div>
+                            <div class="rag-upload-hint">PDF, Excel, CSV, TXT, MD, JSON</div>
+                        </div>
+                        <div id="ragFilesList" class="rag-files"></div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-head"><h3>Ask Questions</h3></div>
+                        <div id="ragMessages" class="rag-chat"></div>
+                        <div class="rag-input-row">
+                            <input id="ragInput" class="chat-inp" type="text" placeholder="Ask anything about the uploaded documents..." autocomplete="off">
+                            <button id="ragSend" class="btn-accent">Ask</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Standard agent output -->
+                <div id="agentOutputSection" class="card hidden">
+                    <div class="card-head"><h3>Agent Output</h3></div>
+                    <div id="agentDetailOutput" class="md-body"></div>
+                </div>
+            </div>
+
             <!-- Memory page -->
             <div class="page" id="page-memory">
                 <div class="pg-head"><h2>Memory</h2></div>

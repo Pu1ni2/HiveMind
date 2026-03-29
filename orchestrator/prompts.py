@@ -48,6 +48,7 @@ Schema
       ],
       "depends_on": ["<agent_ids whose output this agent needs>"],
       "model_tier": "FAST | BALANCED | HEAVY",
+      "agent_type": "standard | rag | form",
       "expected_output": "<what this agent should produce>",
       "parallel_group": <int>
     }
@@ -72,6 +73,17 @@ Rules
 - parallel_group numbers start at 1 and increase.  Lower groups run first.
 - Be creative with personas — give each agent real expertise and personality.
 - Ensure complete coverage of the task with no gaps.
+- agent_type determines what the agent becomes AFTER execution:
+  * "standard" — DEFAULT. Use for most agents. Produces text output.
+  * "rag" — ONLY for agents whose PRIMARY job is analyzing uploaded documents.
+    After execution, users can upload PDFs/Excel/CSV and ask questions.
+    ONLY use "rag" when the task EXPLICITLY requires document analysis,
+    such as: resume screening, contract review, report analysis,
+    compliance checking, academic paper review.
+    Do NOT use "rag" for research agents, planners, marketers, or any
+    agent that gathers info from the web — those are "standard".
+  * "form" — for data collection agents (surveys, registration).
+  MOST agents should be "standard". Only 0-1 agents per plan should be "rag".
 - If you receive RELEVANT PAST EXPERIENCE, use it to:
   * Reuse agent structures that worked well for similar tasks
   * Avoid approaches that failed previously

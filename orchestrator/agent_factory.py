@@ -171,6 +171,7 @@ def create_all_agents(
                 "parallel_group": s.get("parallel_group", 1),
                 "depends_on": s.get("depends_on", []),
                 "objective": s.get("objective", "")[:200],
+                "agent_type": s.get("agent_type", "standard"),
             }
             for s in plan.get("agents", [])
         ]

@@ -40,7 +40,12 @@ MAX_RETRIES = 1
 def forge_tools_for_plan(plan: dict) -> dict[str, list[StructuredTool]]:
     """Forge tools for every agent in the plan.
     Returns {agent_id: [StructuredTool, ...]}
+
+    Tools are forged in PARALLEL using a thread pool for speed.
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import threading
+
     model = ChatOpenAI(
         model=FORGE_MODEL,
         api_key=OPENAI_API_KEY,
@@ -50,33 +55,53 @@ def forge_tools_for_plan(plan: dict) -> dict[str, list[StructuredTool]]:
 
     agent_tools: dict[str, list[StructuredTool]] = {}
     tool_cache: dict[str, StructuredTool] = {}
+    cache_lock = threading.Lock()
 
-    emit("forge_start", {
-        "total_specs": sum(len(a.get("tools_needed", [])) for a in plan.get("agents", []))
-    })
+    # Collect all unique tool specs
+    all_specs: list[tuple[str, dict]] = []  # (agent_id, tool_spec)
+    seen_names: set[str] = set()
 
     for agent_spec in plan.get("agents", []):
         agent_id = agent_spec["id"]
-        tools: list[StructuredTool] = []
-
         for tool_spec in agent_spec.get("tools_needed", []):
             name = tool_spec["name"]
+            if name not in seen_names:
+                seen_names.add(name)
+                all_specs.append((agent_id, tool_spec))
 
+    emit("forge_start", {"total_specs": len(all_specs)})
+
+    def forge_one(agent_id: str, spec: dict) -> tuple[str, str, StructuredTool | None]:
+        name = spec["name"]
+        emit("forge_tool_start", {"tool_name": name, "agent_id": agent_id,
+                                   "description": spec.get("description", "")})
+        tool = _forge_single_tool(spec, model)
+        success = tool is not None
+        emit("forge_tool_done", {"tool_name": name, "agent_id": agent_id, "success": success})
+        return name, agent_id, tool
+
+    # Forge all tools in parallel (up to 6 concurrent)
+    max_workers = min(len(all_specs), 6)
+    if max_workers > 0:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(forge_one, aid, spec): (aid, spec)
+                for aid, spec in all_specs
+            }
+            for future in as_completed(futures):
+                name, aid, tool = future.result()
+                if tool is not None:
+                    with cache_lock:
+                        tool_cache[name] = tool
+
+    # Assign cached tools to agents
+    for agent_spec in plan.get("agents", []):
+        agent_id = agent_spec["id"]
+        tools = []
+        for tool_spec in agent_spec.get("tools_needed", []):
+            name = tool_spec["name"]
             if name in tool_cache:
                 tools.append(tool_cache[name])
-                continue
-
-            emit("forge_tool_start", {"tool_name": name, "agent_id": agent_id,
-                                       "description": tool_spec.get("description", "")})
-
-            tool = _forge_single_tool(tool_spec, model)
-            if tool is not None:
-                tool_cache[name] = tool
-                tools.append(tool)
-                emit("forge_tool_done", {"tool_name": name, "agent_id": agent_id, "success": True})
-            else:
-                emit("forge_tool_done", {"tool_name": name, "agent_id": agent_id, "success": False})
-
         agent_tools[agent_id] = tools
         print(f"[FORGE] {agent_id}: {len(tools)} tool(s) ready")
 

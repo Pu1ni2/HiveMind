@@ -11,7 +11,7 @@ if not OPENAI_API_KEY:
 PLANNER_MODEL = "gpt-4o"
 EVALUATOR_MODEL = "gpt-4o"
 COMPILER_MODEL = "gpt-4o"
-FORGE_MODEL = "gpt-4o"
+FORGE_MODEL = "gpt-4o-mini"
 
 TIER_TO_MODEL = {
     "FAST": "gpt-4o-mini",

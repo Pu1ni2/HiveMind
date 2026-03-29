@@ -11,7 +11,7 @@ import queue
 import json
 import uuid
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,6 +25,7 @@ from orchestrator.pipeline import run_task
 from orchestrator.capabilities import OUTPUT_DIR
 from orchestrator.config import OPENAI_API_KEY
 from orchestrator.memory import MemoryManager
+from orchestrator.rag_engine import process_upload, query_rag, get_agent_files
 
 app = FastAPI(title="HIVEMIND")
 
@@ -346,6 +347,82 @@ async def memory_stats():
         }
     except Exception as exc:
         return {"error": str(exc)}
+
+
+# ── RAG Agent endpoints ─────────────────────────────────────────────
+
+@app.post("/api/agents/{agent_id}/upload")
+async def upload_to_agent(agent_id: str, file: UploadFile = File(...)):
+    """Upload a file to an agent's RAG knowledge base."""
+    content = await file.read()
+    result = process_upload(agent_id, file.filename, content)
+    return result
+
+
+class RAGQueryRequest(BaseModel):
+    question: str
+
+
+@app.post("/api/agents/{agent_id}/query")
+async def query_agent_rag(agent_id: str, req: RAGQueryRequest):
+    """Query an agent's RAG knowledge base."""
+    # Get agent context from session
+    agent_role = ""
+    agent_persona = ""
+    agent_objective = ""
+
+    for session in _sessions.values():
+        ao = session.get("agent_outputs", {}).get(agent_id)
+        if ao:
+            agent_role = ao.get("role", agent_id)
+            # Get full spec from plan
+            for a in session.get("plan", {}).get("agents", []):
+                if a.get("id") == agent_id:
+                    agent_persona = a.get("persona", "")
+                    agent_objective = a.get("objective", "")
+                    break
+            break
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: query_rag(
+            agent_id, req.question,
+            agent_role=agent_role,
+            agent_persona=agent_persona,
+            agent_objective=agent_objective,
+        )
+    )
+    return result
+
+
+@app.get("/api/agents/{agent_id}/files")
+async def list_agent_files(agent_id: str):
+    """List all files in an agent's RAG knowledge base."""
+    files = get_agent_files(agent_id)
+    return {"files": files}
+
+
+@app.get("/api/agents/{agent_id}/info")
+async def get_agent_info(agent_id: str):
+    """Get full agent spec from any active session."""
+    for session in _sessions.values():
+        for a in session.get("plan", {}).get("agents", []):
+            if a.get("id") == agent_id:
+                ao = session.get("agent_outputs", {}).get(agent_id, {})
+                return {
+                    "id": agent_id,
+                    "role": a.get("role", ""),
+                    "persona": a.get("persona", ""),
+                    "objective": a.get("objective", ""),
+                    "tools": [t.get("name") for t in a.get("tools_needed", [])],
+                    "model_tier": a.get("model_tier", ""),
+                    "agent_type": a.get("agent_type", "standard"),
+                    "output": ao.get("output", ""),
+                    "depends_on": a.get("depends_on", []),
+                    "expected_output": a.get("expected_output", ""),
+                }
+    return {"error": "Agent not found"}
 
 
 # ── Serve frontend ──────────────────────────────────────────────────

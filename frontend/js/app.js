@@ -66,6 +66,26 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Error toast
     $("#errorToastClose").addEventListener("click", () => $("#errorToast").classList.add("hidden"));
+
+    // Agent detail / RAG
+    $("#agentDetailBack").addEventListener("click", () => navigateTo("agents"));
+    $("#ragSend").addEventListener("click", sendRagQuery);
+    $("#ragInput").addEventListener("keydown", (e) => { if (e.key === "Enter") sendRagQuery(); });
+
+    // File upload (click + drag-and-drop)
+    const dropZone = $("#ragDropZone");
+    const fileInput = $("#ragFileInput");
+    dropZone.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", (e) => {
+        Array.from(e.target.files).forEach(f => uploadRagFile(f));
+        fileInput.value = "";
+    });
+    dropZone.addEventListener("dragover", (e) => { e.preventDefault(); dropZone.classList.add("dragover"); });
+    dropZone.addEventListener("dragleave", () => dropZone.classList.remove("dragover"));
+    dropZone.addEventListener("drop", (e) => {
+        e.preventDefault(); dropZone.classList.remove("dragover");
+        Array.from(e.dataTransfer.files).forEach(f => uploadRagFile(f));
+    });
 });
 
 // ── Theme ─────────────────────────────────────────────────────────
@@ -332,7 +352,9 @@ function renderAgentCards() {
         const st = state.agentStatuses[a.id]||"waiting";
         const tags = (a.tools||[]).map(t=>`<span class="tool-tag">${escapeHTML(t)}</span>`).join("");
         const card = document.createElement("div"); card.className = `agent-card ${st}`; card.id = `agents-${a.id}`;
-        card.innerHTML = `<div class="agent-card-header"><div class="agent-card-role">${escapeHTML(a.role||a.id)}</div><div class="agent-card-status ${st}">${st}</div></div><div class="agent-card-id">${escapeHTML(a.id)}</div><div class="agent-card-section"><div class="agent-card-label">Persona</div><div class="agent-card-persona">${escapeHTML(a.persona||"")}</div></div><div class="agent-card-section"><div class="agent-card-label">Objective</div><div class="agent-card-objective">${escapeHTML(a.objective||"")}</div></div><div class="agent-card-section"><div class="agent-card-label">Tools (${(a.tools||[]).length})</div><div class="agent-card-tools">${tags||'<span class="text-muted">None</span>'}</div></div><div class="agent-card-footer"><span class="agent-card-meta-item"><span class="agent-card-label">Group</span> ${a.parallel_group||"?"}</span><span class="agent-card-meta-item"><span class="agent-card-label">Model</span> ${a.model_tier||"BALANCED"}</span></div>`;
+        const typeLabel = a.agent_type && a.agent_type !== "standard" ? `<span class="badge ${a.agent_type==="rag"?"bg-blue":"bg-green"}" style="margin-left:6px;font-size:.55rem">${a.agent_type.toUpperCase()}</span>` : "";
+        card.innerHTML = `<div class="agent-card-header"><div class="agent-card-role">${escapeHTML(a.role||a.id)}${typeLabel}</div><div class="agent-card-status ${st}">${st}</div></div><div class="agent-card-id">${escapeHTML(a.id)} &mdash; click to open</div><div class="agent-card-section"><div class="agent-card-label">Persona</div><div class="agent-card-persona">${escapeHTML(a.persona||"")}</div></div><div class="agent-card-section"><div class="agent-card-label">Objective</div><div class="agent-card-objective">${escapeHTML(a.objective||"")}</div></div><div class="agent-card-section"><div class="agent-card-label">Tools (${(a.tools||[]).length})</div><div class="agent-card-tools">${tags||'<span class="text-muted">None</span>'}</div></div><div class="agent-card-footer"><span class="agent-card-meta-item"><span class="agent-card-label">Group</span> ${a.parallel_group||"?"}</span><span class="agent-card-meta-item"><span class="agent-card-label">Model</span> ${a.model_tier||"BALANCED"}</span></div>`;
+        card.addEventListener("click", () => openAgentDetail(a.id));
         grid.appendChild(card);
     });
     // Execution grid (compact)
@@ -437,6 +459,147 @@ function openChat(id,role){state.chatAgentId=id;$("#chatAgentRole").textContent=
 function closeChat(){$("#chatModal").classList.add("hidden");state.chatAgentId=null;}
 function addChatMsg(role,text){const c=$("#chatMessages");const m=document.createElement("div");m.className=`chat-msg ${role}`;if(role==="agent")m.innerHTML=renderMd(text);else m.textContent=text;c.appendChild(m);c.scrollTop=c.scrollHeight;return m;}
 async function sendChat(){const input=$("#chatInput");const msg=input.value.trim();if(!msg||!state.chatAgentId||!state.sessionId)return;input.value="";addChatMsg("user",msg);const typing=addChatMsg("agent","Thinking...");typing.classList.add("typing");$("#chatSend").disabled=true;try{const r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_id:state.sessionId,agent_id:state.chatAgentId,message:msg})});const d=await r.json();typing.remove();addChatMsg("agent",d.error?`Error: ${d.error}`:d.response||"No response.");}catch(e){typing.remove();addChatMsg("agent",`Error: ${e.message}`);}$("#chatSend").disabled=false;input.focus();}
+
+// ── Agent Detail / RAG ────────────────────────────────────────────
+let _ragAgentId = null;
+
+function openAgentDetail(agentId) {
+    _ragAgentId = agentId;
+    // Show the detail page
+    $$(".sb-item").forEach(b => b.classList.remove("active"));
+    $$(".page").forEach(p => p.classList.remove("active"));
+    $("#page-agent-detail").classList.add("active");
+
+    // Load agent info
+    fetch(`/api/agents/${agentId}/info`).then(r=>r.json()).then(info => {
+        if (info.error) { $("#agentDetailTitle").textContent = agentId; return; }
+
+        $("#agentDetailTitle").textContent = info.role || agentId;
+        const agentType = info.agent_type || "standard";
+        $("#agentTypeBadge").textContent = agentType.toUpperCase();
+        $("#agentTypeBadge").className = `badge ${agentType === "rag" ? "bg-blue" : ""}`;
+
+        $("#agentDetailMeta").innerHTML = `
+            <div><strong>Persona:</strong> ${escapeHTML(info.persona)}</div>
+            <div><strong>Objective:</strong> ${escapeHTML(info.objective)}</div>
+            <div><strong>Tools:</strong> ${(info.tools||[]).map(t=>`<span class="tool-tag">${escapeHTML(t)}</span>`).join(" ")}</div>
+            <div><strong>Model:</strong> ${info.model_tier} &nbsp; <strong>Type:</strong> ${agentType}</div>
+        `;
+
+        // Only RAG agents get the upload/document Q&A interface
+        if (agentType === "rag") {
+            $("#ragSection").classList.remove("hidden");
+            $("#ragMessages").innerHTML = "";
+            addRagMsg("agent", `I'm the **${info.role}**. Upload documents and I'll analyze them. My expertise: ${info.persona?.substring(0, 100) || "document analysis"}`);
+            loadRagFiles(agentId);
+        } else {
+            $("#ragSection").classList.add("hidden");
+        }
+
+        // Show output for all agents
+        if (info.output) {
+            $("#agentOutputSection").classList.remove("hidden");
+            $("#agentDetailOutput").innerHTML = renderMd(info.output);
+        } else {
+            $("#agentOutputSection").classList.add("hidden");
+        }
+    });
+}
+
+function loadRagFiles(agentId) {
+    fetch(`/api/agents/${agentId}/files`).then(r=>r.json()).then(data => {
+        const list = $("#ragFilesList");
+        const files = data.files || [];
+        if (!files.length) { list.innerHTML = ""; return; }
+        list.innerHTML = files.map(f => `
+            <div class="rag-file-item">
+                <span class="rag-file-name">${escapeHTML(f.filename)}</span>
+                <span class="rag-file-chunks">${f.chunks} chunks</span>
+                <span class="rag-file-status indexed">Indexed</span>
+            </div>
+        `).join("");
+    });
+}
+
+async function uploadRagFile(file) {
+    if (!_ragAgentId) return;
+    // Show uploading state
+    const list = $("#ragFilesList");
+    const item = document.createElement("div");
+    item.className = "rag-file-item";
+    item.id = `rag-file-${file.name.replace(/\W/g, "_")}`;
+    item.innerHTML = `<span class="rag-file-name">${escapeHTML(file.name)}</span><span class="rag-file-status indexing">Indexing...</span>`;
+    list.appendChild(item);
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+        const resp = await fetch(`/api/agents/${_ragAgentId}/upload`, { method: "POST", body: formData });
+        const result = await resp.json();
+        item.innerHTML = `
+            <span class="rag-file-name">${escapeHTML(file.name)}</span>
+            <span class="rag-file-chunks">${result.chunks || 0} chunks</span>
+            <span class="rag-file-status ${result.status === "ok" ? "indexed" : "error"}">${result.status === "ok" ? "Indexed" : "Error"}</span>
+        `;
+        if (result.status === "ok") {
+            addRagMsg("agent", `Indexed **${file.name}** — ${result.chunks} chunks, ${result.chars} chars. Ask me anything about it.`);
+        } else {
+            addRagMsg("agent", `Failed to process ${file.name}: ${result.message}`);
+        }
+    } catch (e) {
+        item.querySelector(".rag-file-status").textContent = "Error";
+        item.querySelector(".rag-file-status").className = "rag-file-status error";
+    }
+}
+
+async function sendRagQuery() {
+    const input = $("#ragInput");
+    const q = input.value.trim();
+    if (!q || !_ragAgentId) return;
+    input.value = "";
+    addRagMsg("user", q);
+
+    const typing = addRagMsg("agent", "Thinking...");
+    typing.classList.add("typing");
+    $("#ragSend").disabled = true;
+
+    try {
+        const resp = await fetch(`/api/agents/${_ragAgentId}/query`, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ question: q }),
+        });
+        const data = await resp.json();
+        typing.remove();
+
+        let answer = data.answer || "No answer.";
+        if (data.sources?.length) {
+            answer += `\n\n<div class="rag-sources"><strong>Sources:</strong> ${data.sources.map(s => `<span class="rag-source-item">${escapeHTML(s.filename)} (${Math.round(s.relevance * 100)}%)</span>`).join("")}</div>`;
+        }
+        const msg = addRagMsg("agent", "");
+        msg.innerHTML = renderMd(data.answer || "No answer.");
+        if (data.sources?.length) {
+            msg.innerHTML += `<div class="rag-sources"><strong>Sources:</strong> ${data.sources.map(s => `<span class="rag-source-item">${escapeHTML(s.filename)} (${Math.round(s.relevance * 100)}%)</span>`).join("")}</div>`;
+        }
+    } catch (e) {
+        typing.remove();
+        addRagMsg("agent", `Error: ${e.message}`);
+    }
+    $("#ragSend").disabled = false;
+    input.focus();
+}
+
+function addRagMsg(role, text) {
+    const container = $("#ragMessages");
+    const msg = document.createElement("div");
+    msg.className = `rag-msg ${role}`;
+    if (role === "agent" && text) msg.innerHTML = `<div class="md-body">${renderMd(text)}</div>`;
+    else if (text) msg.textContent = text;
+    container.appendChild(msg);
+    container.scrollTop = container.scrollHeight;
+    return msg;
+}
 
 // ── Log ───────────────────────────────────────────────────────────
 function addLog(level,text){state.logCount++;$("#logCount").textContent=state.logCount;const c=$("#logMessages");const now=new Date().toLocaleTimeString("en-US",{hour12:false});const e=document.createElement("div");e.className="log-entry";e.innerHTML=`<span class="log-ts">${now}</span> <span class="log-type ${level}">${level}</span> ${escapeHTML(text)}`;c.appendChild(e);c.scrollTop=c.scrollHeight;}
