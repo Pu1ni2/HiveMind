@@ -1,0 +1,321 @@
+# Our Project
+
+HiveMind — A multi-agent orchestration system with adversarial debate, dynamic sub-agent spawning, and shared memory brokering. Built with LangGraph, MCP Protocol, and Claude API.
+
+## Problem
+
+Multi-agent AI systems today suffer from three specific, simultaneously unsolved failures:
+
+**Static Agent Rosters (Rigid):** Frameworks like CrewAI, AutoGen, and LangGraph's multi-agent templates require agents to be predefined before the task is known. A Researcher, Writer, and Analyst are hardcoded — but a different task may need a Data Cleaner and Fact-Checker instead. The roster cannot adapt to the task; the task is forced to fit the roster. This rigidity is the most common friction point in production multi-agent deployments, evidenced by hundreds of open GitHub issues across LangChain (180K+ stars), CrewAI (25K+ stars), and AutoGen (40K+ stars) requesting dynamic agent creation.
+
+**Unvalidated Task Decomposition (Fragile):** Orchestrators decompose tasks and execute immediately with no quality gate. The plan itself is never challenged. Bad decompositions produce redundant agents, missing agents, incorrect dependency orderings, or agents working at cross-purposes. The failure is discovered only after execution completes, wasting both time and API tokens. AutoGen v0.4's group chat pattern enables multi-agent conversation but remains unstructured — there is no formal plan-then-critique-then-execute flow with confidence-scored approval.
+
+**Memory Isolation (Incoherent):** Sub-agents operate in isolated context windows. Agent A produces market research, Agent B writes a report — but B never accesses A's findings. Outputs become contradictory, repetitive, or shallow. No existing framework provides a context-aware memory broker that uses task dependency graphs to route relevant outputs between agents while preventing context window bloat.
+
+**Who experiences this and how they benefit:** Developers building multi-step AI workflows — research pipelines, business automation, content production, data analysis — across the LangChain, CrewAI, and AutoGen ecosystems. Startup founders coordinating cross-domain decisions (marketing, hiring, budget, legal) where agent coherence directly affects output quality. Operations managers running multi-department processes where isolated agent outputs produce conflicting recommendations.
+
+HiveMind's design hypothesis is that structured adversarial review before execution will catch plan-level errors that unvalidated decomposition misses. We will test this during the hackathon by running identical tasks through both single-pass decomposition and debate-approved decomposition, comparing output coherence and completeness. The shared memory system is designed to reduce redundant computation by enabling cross-agent context access. The transparent debate transcript provides a concrete audit trail — the single most undervalued feature for any team that needs to understand why an agent system produced a particular result.
+
+**Competitive positioning:** No current framework combines plan validation, dynamic agent creation, and context-aware shared memory:
+
+| Solution | Approach | Specific Gap HiveMind Fills |
+|----------|----------|----------------------------|
+| LangGraph | Graph-based orchestration with nodes/edges | No native adversarial debate. New multi-agent templates (2025) add predefined patterns but lack plan validation and dynamic spawning. |
+| CrewAI | Role-based multi-agent with predefined crews | Static roster. Agents collaborate but never challenge plans. No shared memory broker. |
+| AutoGen v0.4 | Conversational agents with group chat | Group chat is unstructured — no confidence-scored approval gate, no plan-then-execute separation. |
+| OpenClaw | Basic multi-agent scaffold | No memory brokering, no debate, no live UI, no MCP. |
+| Reflexion | Self-critique via same-agent reflection | Same agent critiques itself, sharing the proposer's biases. Not adversarial. |
+| MetaGPT | Software-development-focused multi-agent | Domain-specific to code generation. No general-purpose dynamic spawning. |
+
+HiveMind is the only system combining adversarial debate + plan-driven spawning + context-aware memory on top of LangGraph with MCP interoperability.
+
+## Solution
+
+**Vision:** HiveMind is a dynamic multi-agent orchestration platform that **spawns purpose-built sub-agents on the fly** based on a debate-validated plan, and connects them through **context-aware shared memory** so every agent in the swarm has exactly the context it needs. The north star: give any complex task to HiveMind — it debates the approach, dynamically builds the exact team of agents the task requires, connects them through shared memory, and delivers a coherent result with every decision visible in real time. The right agents for the job do not exist until the plan exists. HiveMind creates the swarm from the plan, not the other way around.
+
+**Innovation 1 — Adversarial Debate as First-Class Orchestration Primitive:** No existing framework implements structured adversarial debate as a mandatory pre-execution quality gate. Reflexion uses the same agent to critique itself, which shares the proposer's biases and blind spots. HiveMind uses a separate Evaluator Agent with a fundamentally different system prompt optimized for finding gaps, edge cases, and redundancies — not for planning. The EA returns a weighted confidence score computed from four sub-dimensions (completeness 0.3, coherence 0.3, efficiency 0.2, dependency_correctness 0.2), each scored independently in structured JSON output. The debate converges when overall confidence reaches 0.8 or after a hard cap of 3 rounds. This is the core architectural insight: the quality of multi-agent output is bounded by the quality of the plan, and adversarial review is how you improve the plan.
+
+**Innovation 2 — Plan-Driven Dynamic Agent Spawning via Prompt Generation Pipeline:** Sub-agents are never predefined. After the debate produces an approved ExecutionPlan, each SubTask is translated into a fully configured sub-agent through an explicit, auditable pipeline: (1) SubTask.agent_type selects a base system prompt from a template registry (e.g., "researcher", "analyst", "writer", "reviewer"), (2) SubTask.description is injected as the task-specific instruction, (3) SubTask.output_schema is embedded as the required JSON response format, (4) SubTask.depends_on triggers the MMA to pre-load filtered dependency context, and (5) SubTask.tools_needed configures tool access. This pipeline is documented as an explicit data contract (the AgentConfig interface) shared between the spawning system and the MMA, agreed upon before hour 6 of the hackathon to prevent integration mismatches.
+
+**Innovation 3 — Context-Aware Memory Management Agent (MMA):** The MMA is not a passive key-value store. It implements context-aware retrieval with two mechanisms: (a) dependency-graph routing — when a sub-agent has depends_on entries, the MMA retrieves only outputs from those specific predecessor tasks, not the entire store; and (b) schema-aware extraction — the MMA matches the requesting agent's output_schema field names against predecessor outputs to extract only relevant fields, producing a focused context payload rather than dumping entire predecessor results. This prevents context window bloat (which degrades LLM output quality) while ensuring cross-agent coherence. The underlying store is a Python dict, but the retrieval logic — dependency routing and schema filtering — is the architectural contribution.
+
+**Innovation 4 — Full Execution Transparency:** The entire pipeline is visible in real time through a streaming UI: debate rounds showing the DA's proposal and the EA's structured critique with sub-scores, the exact moment the EA changes the plan between rounds (this is the killer demo moment — visible proof that adversarial debate adds substantive value, not theatrical overhead), sub-agents spawning with their generated configurations, memory reads and writes flowing between agents, and the final assembled result with full provenance.
+
+**Innovation 5 — Beyond OpenClaw:** OpenClaw provides basic multi-agent scaffolding. HiveMind extends it with adversarial debate, plan-driven spawning via prompt generation pipeline, context-aware memory brokering, MCP-native interfaces, and live visualization.
+
+**Differentiation Strategy:** Debate-first is the product, not a feature — other teams build agents that execute, HiveMind builds agents that argue about how to execute first, and that visible argument is the product. The swarm is generated from the plan — no predefined roster, the approved plan creates the agents through an explicit prompt generation pipeline, making HiveMind universally applicable across domains. The demo tells a story with a clear climax: input → debate → EA visibly changes the plan → swarm spawns from improved plan → agents share memory → coherent output. Architecture is novel, not framework wrapping — adversarial debate graph, context-aware MMA with dependency routing and schema filtering, and plan-to-prompt pipeline are original contributions on LangGraph. MCP-native design positions HiveMind in the emerging interoperability ecosystem.
+
+## Architecture
+
+**System overview:** LangGraph provides the stateful graph-based orchestration with cyclic edges for the debate loop and parallel fan-out for sub-agent execution. MCP standardizes tool access and memory sharing. Direct Python function calls serve as the primary execution path, with MCP as an optional enhancement layer — ensuring the demo runs cleanly regardless of MCP integration status.
+
+**Agent roles:**
+
+| Agent | Role | Implementation |
+|-------|------|----------------|
+| Dynamic Agent (DA) | Orchestrator. Generates ExecutionPlan JSON, defends in debate, triggers prompt generation pipeline, assembles output. | LangGraph node. Claude Sonnet, temperature 0.3. JSON schema-enforced output. |
+| Evaluator Agent (EA) | Adversarial reviewer. Returns EACritique with sub-scores (completeness, coherence, efficiency, dependency_correctness) and weighted confidence. | LangGraph node. Separate system prompt optimized for critique. Adversarial instruction: "Your job is to find problems. A plan with zero critiques is suspicious." |
+| Sub-Agents (SA-1..N) | Task workers. Spawned at runtime from approved plan via prompt generation pipeline. Write outputs to MMA. | Parallel LangGraph branches via asyncio.gather(). Config derived from SubTask through AgentConfig interface. |
+| Memory Management Agent (MMA) | Context-aware memory broker. Dependency-graph routing + schema-aware extraction. Stores outputs, resolves cross-agent dependencies. | LangGraph node. Python dict store with retrieval logic. Optionally exposed as MCP resources. |
+
+**Shared data contract (AgentConfig interface — agreed by hour 6):**
+
+```python
+class AgentConfig(TypedDict):
+    """Contract between prompt generation pipeline (Punith) and MMA (Bhanu).
+    Any sub-agent spawned by the system receives exactly this configuration."""
+    agent_id: str                    # Matches SubTask.task_id
+    system_prompt: str               # Generated from template + description + schema + context
+    tools: list[Callable]            # Direct Python functions (primary) or MCP servers (optional)
+    output_schema: dict              # From SubTask.output_schema — MMA uses this for schema-aware extraction
+    dependency_context: dict | None  # Pre-loaded by MMA from depends_on outputs, filtered by schema fields
+```
+
+**Prompt generation pipeline (how approved plan JSON becomes sub-agents):**
+
+```python
+def generate_agent_config(subtask: SubTask, mma: MemoryStore) -> AgentConfig:
+    # 1. Select base template
+    base_prompt = AGENT_TEMPLATES[subtask.agent_type]  # "researcher", "analyst", "writer", "reviewer"
+    
+    # 2. Inject task instruction
+    prompt = f"{base_prompt}\n\nYour specific task: {subtask.description}"
+    
+    # 3. Inject required output format
+    prompt += f"\n\nYou must respond in this exact JSON format:\n{json.dumps(subtask.output_schema, indent=2)}"
+    
+    # 4. Load filtered dependency context from MMA
+    dep_context = None
+    if subtask.depends_on:
+        dep_context = mma.get_context(
+            task_ids=subtask.depends_on,
+            filter_fields=list(subtask.output_schema.keys())  # Schema-aware extraction
+        )
+        prompt += f"\n\nContext from completed tasks:\n{json.dumps(dep_context, indent=2)}"
+    
+    # 5. Configure tools — direct Python functions first, MCP optional
+    tools = [TOOL_REGISTRY[t] for t in subtask.tools_needed]
+    
+    return AgentConfig(
+        agent_id=subtask.task_id,
+        system_prompt=prompt,
+        tools=tools,
+        output_schema=subtask.output_schema,
+        dependency_context=dep_context
+    )
+```
+
+**MMA context-aware retrieval logic:**
+
+```python
+class MemoryStore:
+    def __init__(self):
+        self.store: dict[str, AgentOutput] = {}
+    
+    def write(self, task_id: str, output: AgentOutput):
+        self.store[task_id] = output
+    
+    def get_context(self, task_ids: list[str], filter_fields: list[str]) -> dict:
+        """Dependency-graph routing + schema-aware extraction."""
+        context = {}
+        for tid in task_ids:
+            if tid in self.store:
+                full_output = self.store[tid].result
+                # Extract only fields relevant to the requesting agent's schema
+                if isinstance(full_output, dict):
+                    context[tid] = {k: v for k, v in full_output.items() if k in filter_fields}
+                else:
+                    context[tid] = full_output
+        return context
+```
+
+**Architecture diagram:**
+
+```
+                        ┌─────────────────────┐
+                        │    User Interface    │
+                        │  (React + WebSocket) │
+                        └──────────┬──────────┘
+                                   │ WebSocket
+                        ┌──────────▼──────────┐
+                        │   FastAPI Backend    │
+                        │   + WebSocket Hub    │
+                        └──────────┬──────────┘
+                                   │
+               ┌───────────────────▼───────────────────┐
+               │        LangGraph State Machine        │
+               │                                       │
+               │  ┌─────────┐  Debate   ┌──────────┐  │
+               │  │ Dynamic │◄─────────►│Evaluator │  │
+               │  │  Agent  │  (2-3     │  Agent   │  │
+               │  │  (DA)   │  rounds)  │  (EA)    │  │
+               │  └────┬────┘           └──────────┘  │
+               │       │ Approved ExecutionPlan        │
+               │       ▼                               │
+               │  ┌──────────────────────────┐        │
+               │  │  Prompt Generation       │        │
+               │  │  Pipeline (SubTask →     │        │
+               │  │  AgentConfig interface)  │        │
+               │  └──┬─────────┬─────────┬───┘        │
+               │     │         │         │             │
+               │     ▼         ▼         ▼             │
+               │  ┌──────┐ ┌──────┐ ┌──────┐          │
+               │  │SA-1  │ │SA-2  │ │SA-N  │          │
+               │  └──┬───┘ └──┬───┘ └──┬───┘          │
+               │     │        │        │               │
+               │     └────────┼────────┘               │
+               │              ▼                        │
+               │  ┌──────────────────────────┐        │
+               │  │  Context-Aware MMA       │        │
+               │  │  (Dependency routing +   │        │
+               │  │   Schema-aware extract)  │        │
+               │  └──────────────────────────┘        │
+               │              │                        │
+               │              ▼                        │
+               │  ┌──────────────────────────┐        │
+               │  │  DA Assembles → EA       │        │
+               │  │  Final Review → User     │        │
+               │  └──────────────────────────┘        │
+               └───────────────────────────────────────┘
+```
+
+**Data flow — Phase 1 (Adversarial Debate):** User submits task via React UI → WebSocket → FastAPI. DA generates ExecutionPlan as structured JSON: list of SubTask objects (task_id, description, agent_type, tools_needed, output_schema, depends_on) plus a dependency graph and token estimate. EA receives plan, returns EACritique: gaps[], edge_cases[], redundancies[], improvements[], sub_scores {completeness: float, coherence: float, efficiency: float, dependency_correctness: float}, confidence (weighted average), approved (bool). DA revises incorporating critique. Loop until confidence ≥ 0.8 or 3 rounds. EA confidence is computed as: (completeness × 0.3) + (coherence × 0.3) + (efficiency × 0.2) + (dependency_correctness × 0.2).
+
+**Data flow — Phase 2 (Dynamic Execution):** Approved ExecutionPlan enters the prompt generation pipeline. Each SubTask produces an AgentConfig via generate_agent_config(). Independent tasks (empty depends_on) launch in parallel via asyncio.gather(). Dependent tasks wait for prerequisites. MMA pre-loads filtered context from predecessor outputs using dependency-graph routing and schema-aware extraction. Each sub-agent writes AgentOutput to MMA store.
+
+**Data flow — Phase 3 (Assembly):** DA collects outputs from MMA ordered by dependency graph. DA synthesizes coherent response. EA performs final quality review. Result streamed to user via WebSocket with full provenance.
+
+**Core data models:**
+
+```python
+class NexusState(TypedDict):
+    user_request: str
+    debate_history: list[DebateRound]
+    approved_plan: ExecutionPlan | None
+    sub_tasks: list[SubTask]
+    sub_agent_outputs: dict[str, AgentOutput]
+    final_output: str | None
+    phase: Literal["debate", "execute", "assemble", "complete"]
+
+class DebateRound(TypedDict):
+    round_number: int
+    da_proposal: str
+    ea_critique: EACritique
+    confidence: float
+
+class EACritique(TypedDict):
+    gaps: list[str]
+    edge_cases: list[str]
+    redundancies: list[str]
+    improvements: list[str]
+    sub_scores: dict[str, float]  # completeness, coherence, efficiency, dependency_correctness
+    confidence: float             # weighted: comp*0.3 + coh*0.3 + eff*0.2 + dep*0.2
+    approved: bool
+
+class ExecutionPlan(TypedDict):
+    tasks: list[SubTask]
+    dependencies: dict[str, list[str]]
+    estimated_tokens: int
+
+class SubTask(TypedDict):
+    task_id: str
+    description: str
+    agent_type: str           # Key into AGENT_TEMPLATES registry
+    tools_needed: list[str]   # Key into TOOL_REGISTRY
+    output_schema: dict       # Injected into prompt AND used by MMA for schema-aware extraction
+    depends_on: list[str]     # Task IDs — MMA uses for dependency-graph routing
+
+class AgentOutput(TypedDict):
+    task_id: str
+    status: Literal["success", "partial", "failed"]
+    result: Any
+    metadata: dict            # tokens_used, execution_time_ms
+```
+
+**LangGraph state machine:**
+
+```python
+from langgraph.graph import StateGraph, END
+
+graph = StateGraph(NexusState)
+graph.add_node("dynamic_agent", dynamic_agent_node)
+graph.add_node("evaluator_agent", evaluator_agent_node)
+graph.add_node("task_decomposer", decompose_tasks_node)
+graph.add_node("sub_agent_executor", execute_sub_agents_node)
+graph.add_node("memory_manager", memory_manager_node)
+graph.add_node("assembler", assemble_output_node)
+
+graph.set_entry_point("dynamic_agent")
+graph.add_edge("dynamic_agent", "evaluator_agent")
+graph.add_conditional_edges("evaluator_agent", should_continue_debate,
+    {"revise": "dynamic_agent", "approved": "task_decomposer"})
+graph.add_edge("task_decomposer", "sub_agent_executor")
+graph.add_edge("sub_agent_executor", "memory_manager")
+graph.add_edge("memory_manager", "assembler")
+graph.add_edge("assembler", END)
+```
+
+**MCP integration (optional enhancement — direct Python calls are the primary path):** Sub-agents access tools via direct Python function calls by default (TOOL_REGISTRY maps tool names to callables). MCP tool server bindings are an optional layer added in hours 9–11 only if the direct path is stable. MMA can optionally expose memory as MCP resources at URIs memory://hivemind/agent/{id}/output and memory://hivemind/shared/plan, but the core demo runs entirely on direct Python dict access. This ensures the demo is never blocked by MCP integration status.
+
+**Tech stack:** Claude Sonnet API (speed + structured JSON output), LangGraph (cyclic graphs, conditional edges, parallel fan-out), Python 3.12 + FastAPI (async + WebSocket), React + Vite + TailwindCSS (real-time UI), Python dict with context-aware retrieval logic (MVP memory), WebSocket (full-duplex streaming). MCP is layered on top only after direct paths are proven stable.
+
+**Scalability design (architecture beyond the demo):** Memory: Python dict → Redis/Valkey (1:1 interface, the MemoryStore.write/get_context methods stay identical). Execution: asyncio.gather() → Celery/Ray distributed workers. Orchestration: LangGraph local → LangGraph Cloud with persistent checkpoints and resumability. Tools: direct Python calls → MCP servers (already designed as optional layer). History: in-memory → PostgreSQL for debate analytics and plan quality tracking over time. None of this is built for the demo — it is architected for so the path from demo to production is clear.
+
+**Ecosystem thinking:** The system is designed for extensibility at every layer. API surface: POST /api/v1/tasks (submit), GET /api/v1/tasks/{id} (status/result), WS /api/v1/tasks/{id}/stream (real-time pipeline), GET /api/v1/tasks/{id}/debate (transcript), GET /api/v1/tasks/{id}/memory (MMA snapshot), DELETE /api/v1/tasks/{id} (cancel). Extension points: custom EA rubrics (swap the EA's system prompt and sub-score weights for domain-specific evaluation — e.g., "prioritize security" for code tasks), agent type registry (add new AGENT_TEMPLATES entries with system prompts and tool configs), webhook callbacks for Slack/CI/CD post-completion notifications. When MCP is enabled, any compliant tool server plugs in without adapters and third-party MCP agents can join as sub-agents.
+
+## Features
+
+- **Adversarial Debate Loop** — DA proposes plan, EA stress-tests through 2–3 rounds. EA returns structured EACritique with four sub-scores (completeness, coherence, efficiency, dependency_correctness) weighted into confidence. Threshold ≥ 0.8 to approve. Hard cap at 3 rounds. Each round streamed live via WebSocket. The key demo moment: watching the EA's critique visibly change the DA's plan between rounds, with sub-scores shifting — proof that adversarial debate adds substantive value.
+- **Plan-Driven Dynamic Agent Spawning** — Sub-agents created at runtime via prompt generation pipeline with explicit AgentConfig interface. SubTask.agent_type → template, .description → instruction, .output_schema → response format, .depends_on → MMA context preload, .tools_needed → tool binding. Never predefined. Pipeline code is auditable.
+- **Context-Aware Shared Memory (MMA)** — Two retrieval mechanisms: dependency-graph routing (only predecessor outputs, not entire store) and schema-aware extraction (filter fields to match requesting agent's output_schema). Prevents context bloat. Maintains coherence. Store is Python dict; retrieval logic is the contribution.
+- **Real-Time Streaming UI** — Debate rounds with DA proposals and EA critiques side-by-side, sub-score bars updating per round, agent spawning with configs visible, execution progress, memory flow arrows between agents, final result with provenance. Focus: make the plan-change moment between debate rounds unmissable.
+- **MCP-Native Tool & Memory Interface (Optional Layer)** — Direct Python function calls are the primary path. MCP is layered on top for interoperability. Sub-agents can access tools via MCP servers when enabled. MMA can expose memory as MCP resources. Demo runs clean without MCP.
+- **LangGraph State Machine** — 6-node cyclic graph: dynamic_agent → evaluator_agent (conditional: revise/approved) → task_decomposer → sub_agent_executor → memory_manager → assembler → END.
+- **Structured JSON Contracts** — All agents use typed TypedDict models with strict validation. EACritique includes sub_scores dict. AgentConfig is the shared interface between spawning and MMA. Invalid outputs caught before MMA writes.
+- **Dependency-Aware Execution** — SubTask.depends_on fields define the execution graph. Independent tasks run in parallel via asyncio.gather(). Dependent tasks wait for predecessors, receive filtered context from MMA.
+
+## Team Plan
+
+| Member | Role | Primary Responsibilities | Integration Points |
+|--------|------|------------------------|-------------------|
+| Krishna | Backend Lead | LangGraph state machine, debate loop, DA/EA prompts, EA sub-score calibration | Provides graph API to Bhanu's FastAPI layer |
+| Punith | Agent Engineer | Prompt generation pipeline, AGENT_TEMPLATES registry, asyncio execution | Outputs AgentConfig — must match Bhanu's MMA contract by hour 6 |
+| Bhanu | Memory & API | MMA context-aware retrieval, MemoryStore class, FastAPI, WebSocket streaming | Consumes AgentConfig from Punith — data contract agreed by hour 6 |
+| Ahnaf | Frontend Lead | React UI, debate visualization with sub-score bars, plan-change highlight between rounds | Consumes WebSocket events from Bhanu's streaming layer |
+| Abisath | Integration & Docs | E2E testing, README, demo script (product launch scenario), deployment | Validates all integration seams work E2E |
+
+**Hour-6 gate (hard checkpoint):** By hour 6, three things must be true or the team stops and resolves them: (1) the debate loop converges within 3 rounds on 5+ test tasks with stable EA confidence scoring, (2) the AgentConfig data contract is explicitly agreed between Punith and Bhanu with matching field types, and (3) the EA prompt is calibrated — neither too permissive (approves everything round 1) nor too restrictive (never approves). If the EA is too permissive, minimum sub-score thresholds are raised and adversarial prompt language is strengthened. If too restrictive, confidence threshold drops to 0.7 and sub-score minimums are relaxed.
+
+**24-hour sprint milestones:**
+
+| Time | Milestone | Owner(s) | Deliverables | Success Criteria |
+|------|-----------|----------|-------------|-----------------|
+| Hr 0–1 | Setup | All | Repo, master plan, env, API keys | All members can run dev environment |
+| Hr 1–3 | Agent Prompts | Krishna + Punith | DA planning prompt, EA critique prompt with sub-score rubric, 4 base templates (researcher, analyst, writer, reviewer) | Each prompt produces valid structured JSON for 3+ test inputs |
+| Hr 3–6 | Debate Loop + Data Contract | Krishna + Bhanu + Punith | LangGraph debate loop with conditional edges. AgentConfig interface agreed and documented. EA calibrated on 5+ tasks. | Debate converges within 3 rounds. EA neither permissive nor restrictive. AgentConfig contract signed off. |
+| Hr 6–9 | Spawning + MMA | Punith + Bhanu | Prompt generation pipeline (SubTask → AgentConfig). MMA with dependency routing + schema extraction. | 4 sub-agents spawn, execute in parallel, share context through MMA correctly |
+| Hr 9–11 | MCP Layer (Optional) | Punith + Bhanu | MCP tool servers + MMA as MCP resources. Only if direct Python paths are stable. | If unstable, skip — demo uses direct calls. No blocking. |
+| Hr 11–14 | Backend API | Bhanu + Krishna | FastAPI REST + WebSocket streaming. Full pipeline via API. | curl submits task and receives streamed debate + results |
+| Hr 14–18 | Frontend | Ahnaf + Abisath | Debate viz with sub-score bars, plan-change highlight between rounds, agent spawning display, memory flow | User watches EA change the plan — the demo moment is visually unmissable |
+| Hr 18–20 | E2E Testing | Abisath + All | Product launch scenario, research task, content creation. Cross-component bug fixes. | All 3 scenarios complete E2E without errors |
+| Hr 20–22 | Docs + Polish | Abisath + Ahnaf | README documenting prompt generation pipeline, AgentConfig contract, setup instructions. Architecture diagram. | New developer can clone and run in 5 minutes |
+| Hr 22–24 | Demo Prep | All | Rehearse product launch demo 3 times. Backup recording. | Demo runs 3x cleanly. Backup exists. |
+
+**Commit strategy:** 30–50 commits over 24 hours. Meaningful messages tied to milestones (e.g., "feat: debate loop with EA sub-scoring", "feat: MMA schema-aware extraction", "contract: AgentConfig interface v1"). Feature branches merged at milestones via PR. No bulk dumps.
+
+**Feasibility:** 4 prompt templates + prompt generation pipeline (~60 lines) + MMA with retrieval logic (~80 lines) + LangGraph graph (~100 lines) + FastAPI server (~50 lines) + React UI (~500 lines) + data models + glue code = ~1,500–2,000 total lines. No vector DB, no model training, no auth, no production infra. The debate loop is the riskiest component — de-risked by building first (hours 3–6) with explicit EA calibration and the hour-6 gate. MCP is explicitly optional and never on the critical path. Direct Python function calls are the primary execution path for the demo.
+
+**Risk assessment:**
+
+| Risk | Likelihood | Impact | Mitigation | Contingency |
+|------|-----------|--------|------------|-------------|
+| API rate limits / latency | Medium | High | Claude Sonnet for speed. Exponential backoff with jitter. 3-round cap. | Reduce to 2 debate rounds. Pre-cache test scenarios. |
+| Debate non-convergence | Low | Medium | Hard 3-round cap. Confidence threshold 0.8. | Proceed with highest-confidence plan. Flag for user in UI. |
+| EA prompt too permissive (approves round 1) | Medium | High | Test with deliberately flawed plans. Require minimum 0.5 per sub-score. Adversarial prompt: "Your job is to find problems." | Raise sub-score minimums. Add explicit checklist to EA prompt. |
+| EA prompt too restrictive (never approves) | Medium | Medium | Lower threshold to 0.7. Relax sub-score minimums. | Auto-approve after round 3 with warning flag in UI. |
+| AgentConfig contract mismatch (Punith/Bhanu) | Medium | High | Explicit TypedDict contract agreed and tested by hour 6. | Hour-6 gate blocks all downstream work until resolved. |
+| Sub-agent output inconsistency | Medium | Medium | JSON schema enforcement via output_schema. Validate before MMA write. | DA assembles from valid outputs only. Failed agents marked in response. |
+| MCP integration blocks demo | Medium | High | MCP is optional layer. Direct Python calls are primary path. | Skip MCP entirely. Demo runs on direct function calls + dict. |
+| Scope creep | High | High | Fixed 8 features. No additions during hack. | Cut order: MCP first, then frontend polish, then dependency execution. Core = debate + spawning + memory. |
+
+**Critical path:** The debate loop (DA ↔ EA) is the single blocking dependency. Krishna and Bhanu build it hours 3–6, including EA prompt calibration with 5+ test tasks and sub-score stability verification. The AgentConfig data contract between Punith and Bhanu must be agreed by hour 6. Everything after — spawning, MMA, frontend — is incremental and parallelizable. The hour-6 gate ensures the foundation is solid before the team fans out.
