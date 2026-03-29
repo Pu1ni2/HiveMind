@@ -413,8 +413,12 @@ python run_server.py
 # CLI
 python main.py "Plan a product launch for a B2B SaaS tool"
 
-# Benchmark (single LLM vs full pipeline)
+# Single-task evaluation: HiveMind pipeline vs direct GPT-4o
 python evaluate.py
+python evaluate.py "Your custom task here"
+
+# Full benchmark suite across 4 task categories
+# Saves results to output/benchmark_results.json
 python run_benchmark.py
 ```
 

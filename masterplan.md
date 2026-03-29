@@ -453,23 +453,43 @@ SQLite tables:
 
 ## 7. Evaluation
 
-### Benchmark Design (`evaluate.py`, `run_benchmark.py`)
+### `evaluate.py` — Single-Task Comparison
 
-Four task categories tested in parallel:
-1. **Mathematical reasoning** — verifiable correct answer, measures token efficiency
-2. **Code generation** — functional correctness, measures plan quality
-3. **Complex software design** — architecture decisions, measures coherence
-4. **Multi-domain research** — cross-domain synthesis, measures plan structural errors
+Runs two execution paths on the same task and prints a side-by-side comparison:
 
-For each task, two execution paths run:
-- **Baseline:** Single GPT-4o call with the task as a direct prompt
-- **HiveMind:** Full debate + forge + agent + compile pipeline
+**Baseline path (`direct_llm_call`):**
+```python
+model = ChatOpenAI(model=PLANNER_MODEL, api_key=OPENAI_API_KEY, temperature=0.7)
+response = model.invoke([SystemMessage(...), HumanMessage(content=task)])
+```
 
-Metrics collected:
-- Wall-clock time per phase
-- Total tokens consumed
-- Plan structural errors caught by debate (vs. baseline)
-- Output quality (human-evaluated or LLM-judged)
+**HiveMind path (`hivemind_call`):**
+```python
+result = run_task(task)
+# Internally: quick_check → debate → forge → agents → compile
+```
+
+**Metrics reported:**
+- Wall-clock time (total + per-phase: debate / forge / execute)
+- Output length (chars)
+- Agents spawned, tools generated
+- Known issues flagged by the Compiler
+- Time multiplier and length ratio
+
+Results saved to `output/evaluate_results.json`.
+
+### `run_benchmark.py` — Four-Task Suite
+
+Runs both paths across 4 task categories and produces a summary table:
+
+| Category | What it measures |
+|---|---|
+| Mathematical reasoning | Token efficiency on verifiable tasks |
+| Code generation | Plan quality for implementation tasks |
+| Complex software design | Coherence on architecture decisions |
+| Multi-domain research | Plan structural error detection |
+
+For each task the comparison captures: time multiplier, output length ratio, and issues caught by the Compiler. All results saved to `output/benchmark_results.json`.
 
 ### Known Baseline Failures (Caught by Debate)
 
