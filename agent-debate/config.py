@@ -9,7 +9,7 @@ if ssl_cert and not os.path.exists(ssl_cert):
     os.environ.pop("SSL_CERT_FILE")
 
 # Debate settings
-MAX_ROUNDS = 1
+MAX_ROUNDS = 3
 
 # OpenRouter settings
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
