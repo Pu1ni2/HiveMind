@@ -1,18 +1,10 @@
 import json
-from .llm_client import get_client
+from .llm_client import get_client, _extract_usage
 from .prompts import SUB_AGENT_EXECUTION_TEMPLATE
 
 
 class SubAgent:
     def __init__(self, config: dict, tool_executor=None):
-        """
-        Args:
-            config: Agent spec from Phase 3-4 plan. Keys:
-                    id, role, objective, model, tools_needed,
-                    input, expected_output, context_from_agents
-            tool_executor: function(tool_name, tool_args) -> str
-                           Provided by LangGraph at runtime.
-        """
         self.id = config["id"]
         self.role = config["role"]
         self.objective = config.get("objective", config.get("goal", ""))
@@ -22,6 +14,7 @@ class SubAgent:
         self.input_desc = config.get("input", "")
         self.expected_output = config.get("expected_output", "")
         self.tool_executor = tool_executor
+        self.token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     def run(self, task: str, context: str = "") -> str:
         messages = self._build_messages(task, context)
@@ -31,6 +24,7 @@ class SubAgent:
             response = get_client().chat.completions.create(
                 model=self.model, messages=messages
             )
+            self._accumulate(response)
             return response.choices[0].message.content or "(no output)"
 
         # Agentic tool-use loop
@@ -41,6 +35,7 @@ class SubAgent:
                 tools=self.tool_schemas,
                 tool_choice="auto",
             )
+            self._accumulate(response)
             message = response.choices[0].message
 
             if not message.tool_calls:
@@ -59,6 +54,11 @@ class SubAgent:
                     "tool_call_id": tc.id,
                     "content": result,
                 })
+
+    def _accumulate(self, response) -> None:
+        usage = _extract_usage(response)
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            self.token_usage[key] += usage.get(key, 0)
 
     def _build_messages(self, task: str, context: str) -> list:
         tools_str = ", ".join(self.tools) if self.tools else "none"

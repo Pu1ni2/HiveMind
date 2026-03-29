@@ -1,4 +1,5 @@
 import json
+import time
 import concurrent.futures
 from .config import VALIDATION_MODEL, TIER_TO_MODEL
 from .llm_client import call_llm_json
@@ -8,13 +9,6 @@ from .sub_agent import SubAgent
 
 class DynamicAgent:
     def __init__(self, plan: dict, tool_executor=None):
-        """
-        Args:
-            plan: Full pipeline context. Keys:
-                  task, requirements, plan (list of agents),
-                  execution_strategy
-            tool_executor: function(tool_name, tool_args) -> str
-        """
         self.task = plan["task"]
         self.requirements = plan.get("requirements", {})
         self.agents_config = plan["plan"]
@@ -22,6 +16,9 @@ class DynamicAgent:
         self.tool_executor = tool_executor
 
     def run(self) -> dict:
+        metrics = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "time_seconds": 0}
+        start = time.time()
+
         # Build agent configs with resolved models
         agents = self._resolve_agents()
 
@@ -29,25 +26,32 @@ class DynamicAgent:
         parallel_groups = self.execution_strategy.get("parallel_groups", {})
 
         if parallel_groups:
-            results = self._run_grouped(agents, parallel_groups)
+            results, sub_agents = self._run_grouped(agents, parallel_groups)
         else:
-            results = self._run_sequential(agents)
+            results, sub_agents = self._run_sequential(agents)
+
+        # Collect sub-agent tokens
+        for sa in sub_agents:
+            self._accumulate(metrics, sa.token_usage)
 
         # Phase 6: DA validates and compiles
-        validated = self._validate(results)
+        validated, val_usage = self._validate(results)
+        self._accumulate(metrics, val_usage)
+
+        metrics["time_seconds"] = round(time.time() - start, 2)
+        validated["metrics_phase_5_6"] = metrics
         return validated
 
     def _resolve_agents(self) -> dict:
-        """Convert plan agents into a dict keyed by id, with model resolved."""
         agents = {}
         for a in self.agents_config:
             a["model"] = TIER_TO_MODEL.get(a.get("model_tier", "BALANCED"), TIER_TO_MODEL["BALANCED"])
             agents[a["id"]] = a
         return agents
 
-    def _run_grouped(self, agents: dict, parallel_groups: dict) -> dict:
-        """Run agents by parallel groups. Groups run sequentially, agents within a group run in parallel."""
-        outputs = {}  # agent_id -> output
+    def _run_grouped(self, agents: dict, parallel_groups: dict) -> tuple[dict, list]:
+        outputs = {}
+        all_sub_agents = []
 
         for group_num in sorted(parallel_groups.keys(), key=lambda x: int(x)):
             agent_ids = parallel_groups[group_num]
@@ -60,31 +64,34 @@ class DynamicAgent:
                 for config in group_agents:
                     context = self._build_context(config, outputs)
                     agent = SubAgent(config, tool_executor=self.tool_executor)
+                    all_sub_agents.append(agent)
                     print(f"  [{agent.role}] running...")
-                    futures[pool.submit(agent.run, self.task, context)] = config
+                    futures[pool.submit(agent.run, self.task, context)] = (config, agent)
 
                 for future in concurrent.futures.as_completed(futures):
-                    config = futures[future]
+                    config, agent = futures[future]
                     output = future.result()
                     outputs[config["id"]] = {"role": config["role"], "output": output}
                     print(f"  [{config['role']}] done")
 
-        return outputs
+        return outputs, all_sub_agents
 
-    def _run_sequential(self, agents: dict) -> dict:
-        """Fallback: run all agents one by one."""
+    def _run_sequential(self, agents: dict) -> tuple[dict, list]:
         outputs = {}
+        all_sub_agents = []
+
         for agent_id, config in agents.items():
             context = self._build_context(config, outputs)
             agent = SubAgent(config, tool_executor=self.tool_executor)
+            all_sub_agents.append(agent)
             print(f"\n  [{agent.role}] running...")
             output = agent.run(self.task, context)
             outputs[agent_id] = {"role": config["role"], "output": output}
             print(f"  [{config['role']}] done")
-        return outputs
+
+        return outputs, all_sub_agents
 
     def _build_context(self, config: dict, outputs: dict) -> str:
-        """Build context string from agents this one depends on."""
         deps = config.get("context_from_agents", [])
         if not deps:
             return ""
@@ -97,15 +104,17 @@ class DynamicAgent:
 
         return "\n\n".join(parts)
 
-    def _validate(self, outputs: dict) -> dict:
-        """Phase 6: DA compiles and validates all sub-agent outputs."""
+    def _validate(self, outputs: dict) -> tuple[dict, dict]:
+        """Phase 6: DA compiles and validates all sub-agent outputs.
+        Returns (result_dict, token_usage).
+        """
         agent_outputs = ""
         for aid, data in outputs.items():
             agent_outputs += f"\n[Agent {aid} — {data['role']}]:\n{data['output']}\n"
 
         print("\n  [DA] Validating and compiling final output...")
 
-        result = call_llm_json(
+        result, usage = call_llm_json(
             VALIDATION_MODEL,
             messages=[
                 {"role": "system", "content": DA_COMPILE_FINAL_OUTPUT_PROMPT},
@@ -124,4 +133,8 @@ class DynamicAgent:
             "coverage_report": result.get("coverage_report", {}),
             "known_issues": result.get("known_issues", []),
             "agent_outputs": outputs,
-        }
+        }, usage
+
+    def _accumulate(self, metrics: dict, usage: dict) -> None:
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            metrics[key] += usage.get(key, 0)
