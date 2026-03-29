@@ -1,92 +1,127 @@
 import json
-import os
 import concurrent.futures
-from openai import OpenAI
+from .config import VALIDATION_MODEL, TIER_TO_MODEL
+from .llm_client import call_llm_json
+from .prompts import DA_COMPILE_FINAL_OUTPUT_PROMPT
 from .sub_agent import SubAgent
-
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
 class DynamicAgent:
-    def __init__(self, plan_path: str, tool_executor=None):
-        with open(plan_path, "r") as f:
-            self.plan = json.load(f)
-        self.tool_executor = tool_executor  # comes from LangGraph
+    def __init__(self, plan: dict, tool_executor=None):
+        """
+        Args:
+            plan: Full pipeline context. Keys:
+                  task, requirements, plan (list of agents),
+                  execution_strategy
+            tool_executor: function(tool_name, tool_args) -> str
+        """
+        self.task = plan["task"]
+        self.requirements = plan.get("requirements", {})
+        self.agents_config = plan["plan"]
+        self.execution_strategy = plan.get("execution_strategy", {})
+        self.tool_executor = tool_executor
 
-    def run(self):
-        order = self.plan.get("execution_order", "sequential")
+    def run(self) -> dict:
+        # Build agent configs with resolved models
+        agents = self._resolve_agents()
 
-        if order == "parallel":
-            results = self._run_parallel()
+        # Execute based on parallel groups
+        parallel_groups = self.execution_strategy.get("parallel_groups", {})
+
+        if parallel_groups:
+            results = self._run_grouped(agents, parallel_groups)
         else:
-            results = self._run_sequential()
+            results = self._run_sequential(agents)
 
+        # Phase 6: DA validates and compiles
         validated = self._validate(results)
         return validated
 
-    def _run_sequential(self):
-        context = ""
-        results = {}
+    def _resolve_agents(self) -> dict:
+        """Convert plan agents into a dict keyed by id, with model resolved."""
+        agents = {}
+        for a in self.agents_config:
+            a["model"] = TIER_TO_MODEL.get(a.get("model_tier", "BALANCED"), TIER_TO_MODEL["BALANCED"])
+            agents[a["id"]] = a
+        return agents
 
-        for agent_config in self.plan["agents"]:
-            agent = SubAgent(
-                role=agent_config["role"],
-                goal=agent_config["goal"],
-                tools=agent_config.get("tools", []),
-                tool_executor=self.tool_executor,
-            )
-            print(f"\n[{agent.role}] running...")
-            output = agent.run(self.plan["task"], context)
-            print(output)
-            results[agent.role] = output
-            context += f"\n\n[{agent.role}]:\n{output}"
+    def _run_grouped(self, agents: dict, parallel_groups: dict) -> dict:
+        """Run agents by parallel groups. Groups run sequentially, agents within a group run in parallel."""
+        outputs = {}  # agent_id -> output
 
-        return results
+        for group_num in sorted(parallel_groups.keys(), key=lambda x: int(x)):
+            agent_ids = parallel_groups[group_num]
+            print(f"\n  Group {group_num}: agents {agent_ids}")
 
-    def _run_parallel(self):
-        results = {}
-        agents = [
-            SubAgent(role=a["role"], goal=a["goal"], tools=a.get("tools", []), tool_executor=self.tool_executor)
-            for a in self.plan["agents"]
-        ]
+            group_agents = [agents[aid] for aid in agent_ids if aid in agents]
 
-        print(f"\nRunning {len(agents)} agents in parallel...")
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                futures = {}
+                for config in group_agents:
+                    context = self._build_context(config, outputs)
+                    agent = SubAgent(config, tool_executor=self.tool_executor)
+                    print(f"  [{agent.role}] running...")
+                    futures[pool.submit(agent.run, self.task, context)] = config
 
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            futures = {pool.submit(a.run, self.plan["task"]): a for a in agents}
-            for future in concurrent.futures.as_completed(futures):
-                agent = futures[future]
-                output = future.result()
-                print(f"\n[{agent.role}] done.")
-                print(output)
-                results[agent.role] = output
+                for future in concurrent.futures.as_completed(futures):
+                    config = futures[future]
+                    output = future.result()
+                    outputs[config["id"]] = {"role": config["role"], "output": output}
+                    print(f"  [{config['role']}] done")
 
-        return results
+        return outputs
 
-    def _validate(self, results: dict) -> dict:
-        combined = ""
-        for role, output in results.items():
-            combined += f"\n[{role}]:\n{output}\n"
+    def _run_sequential(self, agents: dict) -> dict:
+        """Fallback: run all agents one by one."""
+        outputs = {}
+        for agent_id, config in agents.items():
+            context = self._build_context(config, outputs)
+            agent = SubAgent(config, tool_executor=self.tool_executor)
+            print(f"\n  [{agent.role}] running...")
+            output = agent.run(self.task, context)
+            outputs[agent_id] = {"role": config["role"], "output": output}
+            print(f"  [{config['role']}] done")
+        return outputs
 
-        print("\n[Dynamic Agent] validating results...")
+    def _build_context(self, config: dict, outputs: dict) -> str:
+        """Build context string from agents this one depends on."""
+        deps = config.get("context_from_agents", [])
+        if not deps:
+            return ""
 
-        response = client.chat.completions.create(
-            model="gpt-4o",
+        parts = []
+        for dep_id in deps:
+            if dep_id in outputs:
+                dep = outputs[dep_id]
+                parts.append(f"[{dep['role']}]:\n{dep['output']}")
+
+        return "\n\n".join(parts)
+
+    def _validate(self, outputs: dict) -> dict:
+        """Phase 6: DA compiles and validates all sub-agent outputs."""
+        agent_outputs = ""
+        for aid, data in outputs.items():
+            agent_outputs += f"\n[Agent {aid} — {data['role']}]:\n{data['output']}\n"
+
+        print("\n  [DA] Validating and compiling final output...")
+
+        result = call_llm_json(
+            VALIDATION_MODEL,
             messages=[
-                {"role": "system", "content": (
-                    "You are the Dynamic Agent. Your job is to validate the combined output "
-                    "from all sub-agents. Check if the original task was fully answered. "
-                    "If yes, return the final consolidated answer. "
-                    "If something is missing or wrong, point out what needs fixing."
-                )},
+                {"role": "system", "content": DA_COMPILE_FINAL_OUTPUT_PROMPT},
                 {"role": "user", "content": (
-                    f"Original task: {self.plan['task']}\n\n"
-                    f"Sub-agent outputs:\n{combined}\n\n"
-                    "Validate and return the final answer."
+                    f"Original user request: {self.task}\n\n"
+                    f"Requirements:\n{json.dumps(self.requirements, indent=2)}\n\n"
+                    f"Plan:\n{json.dumps(self.agents_config, indent=2)}\n\n"
+                    f"Sub-agent outputs:\n{agent_outputs}"
                 )},
             ],
         )
 
-        final_answer = response.choices[0].message.content
-        print("\n[Dynamic Agent] validation complete.")
-        return {"agent_results": results, "final_answer": final_answer}
+        print("  [DA] Validation complete")
+        return {
+            "final_output": result.get("final_output", ""),
+            "coverage_report": result.get("coverage_report", {}),
+            "known_issues": result.get("known_issues", []),
+            "agent_outputs": outputs,
+        }
