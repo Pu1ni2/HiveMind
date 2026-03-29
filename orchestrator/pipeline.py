@@ -1,11 +1,11 @@
 """
 YCONIC Pipeline — top-level entry point.
 
-    task  ──>  debate  ──>  forge tools  ──>  build agents
+    task  -->  debate  -->  forge tools  -->  build agents
               (DA+Eval)    (Tool Forge)       (Agent Factory)
-                                                   │
+                                                   |
                                                    v
-    result <── compile <── execute graph <── build graph
+    result <-- compile <-- execute graph <-- build graph
               (Compiler)   (LangGraph)      (Graph Builder)
 """
 
@@ -17,23 +17,29 @@ from .tool_forge import forge_tools_for_plan
 from .agent_factory import create_all_agents
 from .graph_builder import build_graph
 from .mcp_client import load_mcp_tools
+from .events import EventBus, set_bus, emit
 
 
-def run_task(task: str, mcp_servers: dict | None = None) -> dict:
+def run_task(task: str, mcp_servers: dict | None = None, event_bus: EventBus | None = None) -> dict:
     """Run the full YCONIC orchestration pipeline.
 
     Parameters
     ----------
     task : str
-        The user's task / request in natural language.
+        The user's task in natural language.
     mcp_servers : dict, optional
-        MCP server configs to load external tools from.
+        MCP server configs.
+    event_bus : EventBus, optional
+        If provided, pipeline events are emitted for real-time streaming.
 
     Returns
     -------
     dict with keys: final_output, coverage_report, known_issues, plan,
                     agent_outputs, metadata
     """
+    if event_bus is not None:
+        set_bus(event_bus)
+
     start_time = time.time()
 
     print("=" * 70)
@@ -82,6 +88,10 @@ def run_task(task: str, mcp_servers: dict | None = None) -> dict:
     exec_start = time.time()
     graph = build_graph(plan, agent_bundles)
 
+    emit("graph_built", {
+        "total_nodes": len(agent_bundles) + 1,
+    })
+
     initial_state = {
         "task": task,
         "plan": plan,
@@ -99,7 +109,6 @@ def run_task(task: str, mcp_servers: dict | None = None) -> dict:
     )
     exec_time = time.time() - exec_start
 
-    # ── Done ────────────────────────────────────────────────────────────
     total_time = time.time() - start_time
 
     print("\n" + "=" * 70)

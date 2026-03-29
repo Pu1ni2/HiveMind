@@ -114,10 +114,24 @@ Return **valid JSON only**:
   "modified_plan": { ... }
 }
 
-- If score >= 7 and no CRITICAL issues → set approved: true, verdict: APPROVED.
+- If score >= 6 and no CRITICAL issues → set approved: true, verdict: APPROVED.
   Still include modified_plan with minor improvements if any.
-- If score < 7 or any CRITICAL issue → approved: false, verdict: NEEDS_REVISION.
+- If score < 6 or any CRITICAL issue → approved: false, verdict: NEEDS_REVISION.
   modified_plan MUST contain the full corrected plan (same schema as the DA output).
+
+IMPORTANT EVALUATION GUIDELINES:
+- Be practical, not perfectionist.  A plan that covers 80% well is better
+  than endlessly revising for 100%.
+- Tools DO NOT need to be fully detailed algorithms — they will be
+  implemented by a code generator that has access to real web search,
+  web scraping, file creation, and computation capabilities.
+- Do NOT mark tools as CRITICAL just because the description is high-level.
+  The code generator is smart enough to implement tools from a clear
+  description.  Only flag tools that are genuinely ambiguous or impossible.
+- Focus critique on STRUCTURAL issues: missing roles, wrong dependencies,
+  gaps in task coverage.  Not on tool implementation details.
+- After round 2, be more lenient.  Approve plans that are "good enough"
+  rather than demanding perfection.
 """
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -128,48 +142,126 @@ TOOL_FORGE_PROMPT = """\
 You are the **Tool Forge**, a specialist code generator.
 
 Given a tool specification you MUST write a **single, complete, working
-Python function** that implements it.
+Python function** that DOES REAL WORK — not simulations, not placeholders.
 
-Rules
------
+═══════════════════════════════════════════════════════════════════════
+REAL CAPABILITIES AVAILABLE (pre-loaded in your function's scope):
+═══════════════════════════════════════════════════════════════════════
+
+_search(query: str, max_results: int = 8) -> str
+    Performs a REAL web search via DuckDuckGo. Returns actual results
+    with URLs. USE THIS for any research, data gathering, competitor
+    analysis, market research, finding information.
+
+_scrape(url: str, max_chars: int = 8000) -> str
+    Fetches a REAL webpage and extracts its text content. USE THIS
+    to read actual web pages, articles, documentation.
+
+_save_file(filename: str, content: str) -> str
+    Saves a REAL file to the output/ directory. USE THIS to create
+    deliverables: reports, surveys, plans, CSV data, markdown docs.
+
+_read_file(filename: str) -> str
+    Reads a file from the output/ directory.
+
+_list_files() -> str
+    Lists all files in the output/ directory.
+
+_fetch_json(url: str) -> str
+    Fetches REAL JSON data from a URL. USE THIS for APIs.
+
+_compute(code_str: str, context: dict = None) -> str
+    Executes Python code for calculations. Has math, statistics,
+    json, re, datetime, collections available.
+
+_create_form(filename: str, title: str, fields: list[dict], submit_action: str = "#") -> str
+    Creates a REAL working HTML form page that opens in a browser.
+    Each field: {"name": "...", "label": "...", "type": "text|email|number|textarea|select", "options": [...]}
+    USE THIS for registration forms, surveys, feedback forms, sign-ups.
+    The form has a premium dark theme and actually works.
+
+_OUTPUT_DIR -> str
+    Path to the output directory.
+
+═══════════════════════════════════════════════════════════════════════
+RULES
+═══════════════════════════════════════════════════════════════════════
 1. The function MUST have a clear docstring.
 2. Type-hint every parameter and the return type.
 3. Return a **string** — agents consume tool output as text.
-4. Handle errors gracefully: return a descriptive error string, never raise.
-5. Be **self-contained**: import everything you need INSIDE the function body.
-6. Allowed imports: requests, json, re, math, datetime, statistics,
-   collections, urllib, html, csv, io, textwrap, random, hashlib,
-   base64, decimal, fractions, itertools, functools, operator,
-   string, unicodedata, difflib, pathlib, os.path (read-only).
-7. FORBIDDEN: subprocess, shutil.rmtree, os.system, os.remove, os.rmdir,
-   eval() on arbitrary input, exec(), __import__, ctypes, importlib.
-8. For web requests use the `requests` library.
-9. For file reading, use open() in read mode only.
+4. Handle errors gracefully: return a descriptive error string.
+5. You can import standard library modules INSIDE the function body
+   (json, re, math, datetime, statistics, collections, etc.)
+6. You can also use `requests` for any additional HTTP calls.
+7. FORBIDDEN: subprocess, shutil.rmtree, os.system, os.remove,
+   eval() on arbitrary user input, exec(), __import__, ctypes.
+
+THE MOST IMPORTANT RULES:
+
+1. Your tools must DO REAL WORK using the capabilities above.
+- A "conduct_survey" tool should use _search() to find real data,
+  then _save_file() to create a real survey document.
+- A "analyze_competitors" tool should _search() real competitors
+  and _scrape() their actual websites.
+- A "create_budget" tool should _compute() real calculations
+  and _save_file() a real budget spreadsheet.
+- A "research_venues" tool should _search() real venues in the
+  target city and return actual venue names, capacities, prices.
+
+2. When saving files with _save_file(), save RICH, DETAILED content.
+   NOT a 3-line summary — save the FULL analysis, report, or document.
+   Files should be at least 500-2000 words with proper markdown formatting,
+   sections, bullet points, and real data from search results.
+
+3. When using _scrape(), clean the URL first. Pass only the URL string
+   starting with "http", NOT strings like "URL: https://...".
+
+4. NEVER generate fake or dummy data. No "John Doe", no "jane@example.com",
+   no made-up statistics, no placeholder names.
+   - If a tool needs to create a registration system: create a REAL HTML
+     form that can be opened in a browser and actually collects data.
+   - If a tool needs to create a survey: create a REAL HTML survey page
+     or a real form document that can be distributed.
+   - If a tool needs participant data it doesn't have: create the
+     collection mechanism (form, template, sign-up page) and explain
+     that it needs to be shared with real people.
+   - If a tool needs to send emails: create the REAL email templates
+     (subject, body, recipient list format) ready to be used.
+   - Data from _search() and _scrape() IS real — use it freely.
+   - Computed calculations based on real inputs ARE real — use them.
+   - But NEVER invent names, emails, companies, or statistics.
 
 Output **ONLY** the raw Python function — no markdown fences, no
 explanation, no imports outside the function.
 
-Example
+Example — a tool that ACTUALLY researches and creates a DETAILED document:
 -------
-def search_web(query: str, max_results: int = 5) -> str:
-    \"\"\"Search the web for information using DuckDuckGo.\"\"\"
-    import requests
-    try:
-        resp = requests.get(
-            "https://api.duckduckgo.com/",
-            params={"q": query, "format": "json", "no_html": 1},
-            timeout=10,
-        )
-        data = resp.json()
-        results = []
-        if data.get("AbstractText"):
-            results.append(data["AbstractText"])
-        for topic in data.get("RelatedTopics", [])[:max_results]:
-            if isinstance(topic, dict) and "Text" in topic:
-                results.append(topic["Text"])
-        return "\\n".join(results) if results else f"No results for: {query}"
-    except Exception as e:
-        return f"Search error: {e}"
+def research_market(industry: str, region: str = "US") -> str:
+    \"\"\"Research real market data for an industry and save a detailed report.\"\"\"
+
+    # Gather real data from multiple searches
+    trends = _search(f"{industry} market size trends {region} 2025 2026")
+    competitors = _search(f"top companies in {industry} {region}")
+    challenges = _search(f"{industry} challenges opportunities {region}")
+
+    # Build a RICH, DETAILED report (not a summary!)
+    report = f"# {industry} Market Research Report ({region})\\n\\n"
+    report += f"## Executive Summary\\n"
+    report += f"This report analyzes the {industry} market in {region}, "
+    report += f"covering market trends, key players, and opportunities.\\n\\n"
+    report += f"## 1. Market Trends & Size\\n{trends}\\n\\n"
+    report += f"## 2. Competitive Landscape\\n{competitors}\\n\\n"
+    report += f"## 3. Challenges & Opportunities\\n{challenges}\\n\\n"
+    report += f"## 4. Recommendations\\n"
+    report += f"- Focus on differentiation in the {industry} space\\n"
+    report += f"- Leverage emerging trends identified above\\n"
+    report += f"- Address key challenges proactively\\n"
+
+    # Save the FULL report as a real file
+    filename = f"{industry.replace(' ', '_')}_market_report.md"
+    _save_file(filename, report)
+
+    return report
 """
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -199,6 +291,11 @@ Instructions
 - Think step by step.  Show your reasoning.
 - Your final answer MUST be comprehensive and directly address your objective.
 - Format output clearly with headings and bullet points.
+- NEVER generate fake data (fake names, emails, companies, statistics).
+  If you need to collect data from people, create REAL forms or templates
+  instead.  Data from web search IS real — use it freely.
+- When creating forms or registration systems, build REAL HTML files that
+  work in a browser.
 
 ─── EXPECTED OUTPUT ───
 {expected_output}

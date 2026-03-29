@@ -12,12 +12,14 @@ from .config import OPENAI_API_KEY, COMPILER_MODEL
 from .prompts import COMPILER_PROMPT
 from .state import OrchestratorState
 from .utils import parse_json_response, truncate
+from .events import emit
 
 
 def compile_node(state: OrchestratorState) -> dict:
-    """LangGraph node function.  Reads agent_outputs and produces the final deliverable."""
+    """LangGraph node function. Assembles final deliverable."""
 
     print("\n[COMPILER] Assembling final output ...")
+    emit("compile_start", {})
 
     model = ChatOpenAI(
         model=COMPILER_MODEL,
@@ -27,14 +29,12 @@ def compile_node(state: OrchestratorState) -> dict:
         model_kwargs={"response_format": {"type": "json_object"}},
     )
 
-    # Build agent outputs summary
     agent_outputs_text = ""
     for agent_id, output in state.get("agent_outputs", {}).items():
         role = output.get("role", agent_id)
         text = truncate(output.get("output", ""), 6000)
         agent_outputs_text += f"\n### {role} ({agent_id})\n{text}\n"
 
-    # Build plan summary
     plan = state.get("plan", {})
     plan_agents = plan.get("agents", [])
     plan_summary = ""
@@ -62,8 +62,7 @@ def compile_node(state: OrchestratorState) -> dict:
         recommendations = result.get("recommendations", [])
 
         print(f"[COMPILER] Done — {len(final_output)} chars")
-        if issues:
-            print(f"  Known issues: {len(issues)}")
+        emit("compile_done", {"output_preview": final_output[:500]})
 
         return {
             "final_output": final_output,
@@ -73,13 +72,14 @@ def compile_node(state: OrchestratorState) -> dict:
         }
 
     except Exception as exc:
-        # Fallback: concatenate raw outputs
         print(f"[COMPILER] JSON parse failed ({exc}), using raw concatenation")
 
         raw_output = "# Task Output\n\n"
         for agent_id, output in state.get("agent_outputs", {}).items():
             role = output.get("role", agent_id)
             raw_output += f"## {role}\n{output.get('output', '')}\n\n"
+
+        emit("compile_done", {"output_preview": raw_output[:500]})
 
         return {
             "final_output": raw_output,

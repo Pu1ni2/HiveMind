@@ -12,6 +12,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from .config import OPENAI_API_KEY, PLANNER_MODEL, EVALUATOR_MODEL, MAX_DEBATE_ROUNDS
 from .prompts import DA_PLAN_PROMPT, EVALUATOR_CRITIQUE_PROMPT
 from .utils import parse_json_response
+from .events import emit
 
 
 def run_debate(task: str) -> dict:
@@ -30,6 +31,8 @@ def run_debate(task: str) -> dict:
         model_kwargs={"response_format": {"type": "json_object"}},
     )
 
+    emit("debate_start", {"max_rounds": MAX_DEBATE_ROUNDS})
+
     # ── Phase 1: DA generates initial plan ──────────────────────────────
     print("\n[DA] Generating initial plan ...")
     da_messages = [
@@ -40,6 +43,7 @@ def run_debate(task: str) -> dict:
     da_response = da_model.invoke(da_messages)
     plan = parse_json_response(da_response.content)
     _print_plan_summary(plan)
+    emit("debate_da_response", {"round": 0, "plan": _plan_preview(plan)})
 
     # ── Phase 2: Debate rounds ──────────────────────────────────────────
     for round_num in range(1, MAX_DEBATE_ROUNDS + 1):
@@ -69,13 +73,21 @@ def run_debate(task: str) -> dict:
             desc = issue.get("description", "")
             print(f"  [{sev}] {desc}")
 
+        emit("debate_eval_response", {
+            "round": round_num,
+            "score": score,
+            "verdict": verdict,
+            "approved": approved,
+            "strengths": critique.get("strengths", []),
+            "issues": issues,
+        })
+
         if approved or verdict == "APPROVED":
-            # Use the evaluator's modified plan if it's a polished version
             if critique.get("modified_plan") and isinstance(critique["modified_plan"], dict):
-                # Only use it if it actually has agents
                 if critique["modified_plan"].get("agents"):
                     plan = critique["modified_plan"]
             print(f"\n[DEBATE] Plan APPROVED in round {round_num}")
+            emit("debate_complete", {"plan": _plan_preview(plan), "rounds": round_num, "approved": True})
             return plan
 
         # ── Plan needs revision ─────────────────────────────────────────
@@ -83,9 +95,9 @@ def run_debate(task: str) -> dict:
             if critique["modified_plan"].get("agents"):
                 plan = critique["modified_plan"]
                 print(f"  -> Using evaluator's revised plan")
+                emit("debate_da_response", {"round": round_num, "plan": _plan_preview(plan)})
                 continue
 
-        # Ask DA to revise based on critique
         print(f"  -> DA revising plan ...")
         da_messages.append(AIMessage(content=json.dumps(plan)))
         da_messages.append(
@@ -102,13 +114,36 @@ def run_debate(task: str) -> dict:
         da_response = da_model.invoke(da_messages)
         plan = parse_json_response(da_response.content)
         _print_plan_summary(plan)
+        emit("debate_da_response", {"round": round_num, "plan": _plan_preview(plan)})
 
     print(f"\n[DEBATE] Max rounds ({MAX_DEBATE_ROUNDS}) reached — using last plan")
+    emit("debate_complete", {"plan": _plan_preview(plan), "rounds": MAX_DEBATE_ROUNDS, "approved": False})
     return plan
 
 
+def _plan_preview(plan: dict) -> dict:
+    """Create a JSON-safe preview of the plan for events."""
+    agents = plan.get("agents", [])
+    return {
+        "task_analysis": plan.get("task_analysis", {}),
+        "agents": [
+            {
+                "id": a.get("id"),
+                "role": a.get("role"),
+                "persona": a.get("persona", "")[:120],
+                "objective": a.get("objective", "")[:200],
+                "tools": [t.get("name") for t in a.get("tools_needed", [])],
+                "depends_on": a.get("depends_on", []),
+                "model_tier": a.get("model_tier"),
+                "parallel_group": a.get("parallel_group"),
+            }
+            for a in agents
+        ],
+        "execution_strategy": plan.get("execution_strategy", {}),
+    }
+
+
 def _print_plan_summary(plan: dict) -> None:
-    """Print a compact summary of the plan."""
     agents = plan.get("agents", [])
     analysis = plan.get("task_analysis", {})
     print(f"  Domain: {analysis.get('domain', '?')} | "

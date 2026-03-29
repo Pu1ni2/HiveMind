@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autonomous Multi-Agent Orchestration</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" defer></script>
+    <meta name="theme-color" content="#09090b">
+</head>
+<body>
+    <div id="app">
+        <!-- Ambient background -->
+        <div class="bg-mesh" aria-hidden="true"></div>
+
+        <!-- ─── Header ─────────────────────────────────────────────── -->
+        <header class="header">
+            <div class="header-inner">
+                <div class="logo">
+                    <div class="logo-icon">
+                        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+                            <path d="M14 2L26 8v12l-12 6L2 20V8l12-6z" stroke="url(#g1)" stroke-width="1.5" fill="none"/>
+                            <circle cx="14" cy="14" r="4" fill="url(#g1)"/>
+                            <defs><linearGradient id="g1" x1="0" y1="0" x2="28" y2="28"><stop stop-color="#818cf8"/><stop offset="1" stop-color="#a78bfa"/></linearGradient></defs>
+                        </svg>
+                    </div>
+                    <span class="logo-text">YCONIC</span>
+                </div>
+                <div class="header-status">
+                    <div class="status-dot" id="statusDot"></div>
+                    <span class="status-label" id="statusLabel">Ready</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- ─── Hero / Input ───────────────────────────────────────── -->
+        <section id="heroSection" class="hero">
+            <div class="hero-content">
+                <h1 class="hero-title">
+                    <span class="gradient-text">Build anything</span> with
+                    <br>autonomous AI agents
+                </h1>
+                <p class="hero-subtitle">
+                    Describe a task. YCONIC debates, plans, forges custom tools,
+                    and deploys a team of AI agents to execute it — all dynamically.
+                </p>
+
+                <div class="input-group">
+                    <textarea id="taskInput" class="task-input" placeholder="What would you like to build today?" rows="3" spellcheck="false"></textarea>
+                    <button id="submitBtn" class="btn-primary" type="button">
+                        <span class="btn-label">Launch</span>
+                        <svg class="btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+                    </button>
+                </div>
+
+                <div class="suggestions">
+                    <span class="suggestions-label">Try:</span>
+                    <button class="chip" data-task="Organize a tech conference for 500 people with venue, budget, speakers, and marketing plan">Tech Conference</button>
+                    <button class="chip" data-task="Build a complete startup plan for an AI-powered tutoring company targeting college students">AI Startup Plan</button>
+                    <button class="chip" data-task="Create a comprehensive marketing campaign for a sustainable fashion brand launching in 2026">Marketing Campaign</button>
+                    <button class="chip" data-task="Design a full-stack web application architecture for a real-time collaborative document editor">App Architecture</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- ─── Pipeline View ──────────────────────────────────────── -->
+        <section id="pipelineSection" class="pipeline-section hidden">
+
+            <!-- Task bar -->
+            <div class="task-bar">
+                <div class="task-bar-label">Task</div>
+                <div class="task-bar-text" id="taskBarText"></div>
+            </div>
+
+            <!-- Progress track -->
+            <div class="progress-track">
+                <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+                <div class="phase-track">
+                    <div class="phase-item" data-phase="debate">
+                        <div class="phase-dot"></div><span>Planning</span>
+                    </div>
+                    <div class="phase-item" data-phase="forge">
+                        <div class="phase-dot"></div><span>Tool Forge</span>
+                    </div>
+                    <div class="phase-item" data-phase="execute">
+                        <div class="phase-dot"></div><span>Execution</span>
+                    </div>
+                    <div class="phase-item" data-phase="compile">
+                        <div class="phase-dot"></div><span>Compile</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── Debate phase ──────────────────────────────────────── -->
+            <div id="debateContainer" class="phase-container">
+                <div class="section-header">
+                    <h2 class="section-title">Planning Phase</h2>
+                    <span class="section-badge" id="debateBadge">Debating...</span>
+                </div>
+                <div id="debateMessages" class="debate-messages"></div>
+            </div>
+
+            <!-- ── Tool Forge phase ──────────────────────────────────── -->
+            <div id="forgeContainer" class="phase-container hidden">
+                <div class="section-header">
+                    <h2 class="section-title">Tool Forge</h2>
+                    <span class="section-badge" id="forgeBadge">Forging...</span>
+                </div>
+                <div id="forgeGrid" class="card-grid"></div>
+            </div>
+
+            <!-- ── Agents phase ──────────────────────────────────────── -->
+            <div id="agentsContainer" class="phase-container hidden">
+                <div class="section-header">
+                    <h2 class="section-title">Agent Team</h2>
+                    <span class="section-badge" id="agentsBadge"></span>
+                </div>
+                <div id="agentsGrid" class="card-grid"></div>
+            </div>
+
+            <!-- ── Execution phase ───────────────────────────────────── -->
+            <div id="executionContainer" class="phase-container hidden">
+                <div class="section-header">
+                    <h2 class="section-title">Execution</h2>
+                    <span class="section-badge" id="execBadge">Running...</span>
+                </div>
+                <div id="executionGrid" class="card-grid"></div>
+            </div>
+
+            <!-- ── Agent Outputs (full detail) ────────────────────────── -->
+            <div id="agentOutputsContainer" class="phase-container hidden">
+                <div class="section-header">
+                    <h2 class="section-title">Agent Work Products</h2>
+                    <span class="section-badge" id="outputsBadge"></span>
+                </div>
+                <p class="section-desc">Full output from each agent — click to expand and see exactly what they produced.</p>
+                <div id="agentOutputsList" class="agent-outputs-list"></div>
+            </div>
+
+            <!-- ── Generated Files ───────────────────────────────────── -->
+            <div id="filesContainer" class="phase-container hidden">
+                <div class="section-header">
+                    <h2 class="section-title">Generated Files</h2>
+                    <button id="refreshFiles" class="btn-ghost-sm">Refresh</button>
+                </div>
+                <p class="section-desc">Real files created by agents in the <code>output/</code> directory.</p>
+                <div id="filesList" class="files-list"></div>
+                <div id="filePreview" class="file-preview hidden"></div>
+            </div>
+
+            <!-- ── Output ────────────────────────────────────────────── -->
+            <div id="outputContainer" class="phase-container hidden">
+                <div class="section-header">
+                    <h2 class="section-title">Final Deliverable</h2>
+                </div>
+                <div id="outputContent" class="output-content"></div>
+                <div id="outputMeta" class="output-meta"></div>
+            </div>
+        </section>
+
+        <!-- ─── Activity Log (floating) ────────────────────────────── -->
+        <button id="logToggle" class="log-toggle hidden" title="Activity log">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
+            <span class="log-count" id="logCount">0</span>
+        </button>
+        <aside id="logPanel" class="log-panel">
+            <div class="log-header">
+                <span>Activity Log</span>
+                <button id="logClose" class="btn-ghost">&times;</button>
+            </div>
+            <div id="logMessages" class="log-messages"></div>
+        </aside>
+    </div>
+
+    <!-- ─── Chat Modal ──────────────────────────────────────────── -->
+    <div id="chatModal" class="chat-modal hidden">
+        <div class="chat-modal-inner">
+            <div class="chat-header">
+                <div>
+                    <div class="chat-header-role" id="chatAgentRole"></div>
+                    <div class="chat-header-id" id="chatAgentId"></div>
+                </div>
+                <button id="chatClose" class="btn-ghost">&times;</button>
+            </div>
+            <div id="chatMessages" class="chat-messages"></div>
+            <div class="chat-input-row">
+                <input id="chatInput" class="chat-input" type="text" placeholder="Ask this agent anything..." autocomplete="off">
+                <button id="chatSend" class="btn-primary-sm">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/app.js"></script>
+</body>
+</html>
