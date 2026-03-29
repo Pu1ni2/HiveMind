@@ -521,6 +521,14 @@ async def get_agent_info(agent_id: str):
     raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found in any active session")
 
 
+# ── Health check ─────────────────────────────────────────────────
+
+@app.get("/health")
+async def health():
+    """Deployment health check — used by Render and load balancers."""
+    return {"status": "ok", "service": "hivemind"}
+
+
 # ── Frontend ─────────────────────────────────────────────────────
 
 @app.get("/")
