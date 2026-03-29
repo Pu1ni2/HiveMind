@@ -35,12 +35,23 @@ def run_debate(task: str, memory_context: str = "") -> dict:
 
     # ── Phase 1: DA generates initial plan ──────────────────────────────
     print("\n[DA] Generating initial plan ...")
+
+    # Build DA first message — embed memory context directly in the task prompt
+    # so the model cannot ignore it (it's part of the primary user message)
+    task_prompt = f"Task:\n{task}"
+    if memory_context:
+        task_prompt += (
+            f"\n\n--- RELEVANT PAST EXPERIENCE ---\n"
+            f"{memory_context}\n"
+            f"--- END PAST EXPERIENCE ---\n\n"
+            f"Use the past experience above to avoid known issues and reuse "
+            f"successful agent patterns where applicable."
+        )
+
     da_messages = [
         SystemMessage(content=DA_PLAN_PROMPT),
-        HumanMessage(content=f"Task:\n{task}"),
+        HumanMessage(content=task_prompt),
     ]
-    if memory_context:
-        da_messages.append(HumanMessage(content=f"RELEVANT PAST EXPERIENCE (use to inform your plan):\n{memory_context}"))
 
     da_response = da_model.invoke(da_messages)
     plan = parse_json_response(da_response.content)
@@ -56,6 +67,8 @@ def run_debate(task: str, memory_context: str = "") -> dict:
             HumanMessage(
                 content=(
                     f"Task:\n{task}\n\n"
+                    f"Debate round: {round_num} of {MAX_DEBATE_ROUNDS} "
+                    f"({'FINAL ROUND — approve if no critical issues remain' if round_num == MAX_DEBATE_ROUNDS else 'standard review'})\n\n"
                     f"Plan:\n{json.dumps(plan, indent=2)}"
                 )
             ),

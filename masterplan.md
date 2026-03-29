@@ -99,7 +99,7 @@ The debate subsystem is the architectural core of HiveMind. Two separate LLM ins
 **Dynamic Agent (DA):**
 - Model: `gpt-4o`, temperature=0.7, JSON mode
 - Mandate: produce an `ExecutionPlan` JSON
-- Memory injection: receives `memory_context` from `LongTermMemory.get_planning_context()` before the first generation, containing similar past tasks and lessons learned
+- Memory injection: `memory_context` from `LongTermMemory.get_planning_context()` is embedded directly in the primary task prompt (not as a separate message) so the model cannot ignore it. Contains similar past tasks with their agent rosters, user scores, and known lessons.
 
 **Evaluator Agent (EA):**
 - Model: `gpt-4o`, temperature=0.3, JSON mode
@@ -321,13 +321,13 @@ class Episode:
     timestamp: str
 ```
 
-`LongTermMemory.record_episode()` distills the episode into typed `MemoryEntry` records and indexes them:
+`LongTermMemory.record_episode()` distills the episode into typed `MemoryEntry` records and indexes them. Distillation is quality-gated: `plan_pattern` entries are only written for successful runs (user score ≥ 7/10, or no known issues). `lesson_learned` entries are deduplicated against the last 100 stored lessons — the same issue is not stored twice. `agent_strategy` entries include an effectiveness label (`successful` / `attempted (issues found)`) so the DA can distinguish reliable patterns from uncertain ones.
 
 | `memory_type` | Content | Retrieved by |
 |---|---|---|
-| `plan_pattern` | Successful plan structure for this task type | DA pre-planning |
-| `lesson_learned` | Known issues from past runs | DA + Compiler |
-| `agent_strategy` | Per-agent output patterns | Agent factory (role-scoped) |
+| `plan_pattern` | Successful plan structures (success-gated) | DA pre-planning |
+| `lesson_learned` | Deduplicated known issues from past runs | DA + Compiler |
+| `agent_strategy` | Per-agent tools + effectiveness label | Agent factory (role-scoped) |
 | `user_preference` | Preferences from `/api/feedback` | DA — shapes future plans |
 
 **Retrieval (`SemanticIndex` in `embeddings.py`):**
@@ -588,7 +588,7 @@ Edit `orchestrator/config.py`. Model tiers are per-agent and specified in the Ex
 | No persistent session state | `api/app.py` | Medium | Replace `_sessions` dict with Redis (`redis-py` + `aioredis`); session JSON is already serialisable. LRU eviction and TTL logic transfers directly to Redis TTL keys |
 | No authentication | `api/app.py` | Medium | Add `python-jose` JWT middleware; API key header validation is one FastAPI dependency. For demo, CORS `*` is intentional — restrict to `hivemind-v9fr.onrender.com` for production |
 | `exec()` without timeout | `tool_forge.py` | Low | Wrap in `concurrent.futures.ThreadPoolExecutor` with `future.result(timeout=10)`; forged code that hangs is killed after 10 s and the slot retries with a fallback stub tool |
-| New event loop per MCP call | `mcp_client.py` | Low | Move MCP client to a persistent background thread with a dedicated event loop; use `asyncio.run_coroutine_threadsafe` to submit calls from the pipeline thread |
+| MCP session lifecycle | `mcp_client.py` | Low | **Implemented**: `_get_mcp_loop()` maintains a single daemon event loop thread; all tool calls use `asyncio.run_coroutine_threadsafe()` — no per-call loop creation. Each tool invocation opens a fresh connection (stdio/SSE) to avoid reusing a closed session |
 | ChromaDB optional | `embeddings.py` | Low | SQLite full-text search is active as the live fallback — `SemanticIndex.available` flag gates every call. For production, swap ChromaDB for Pinecone or Weaviate by implementing the same `upsert`/`query` interface |
 | Agent context truncation | `agent_factory.py` | Low | 8,000-char cap prevents token overflow; if a dependency output is truncated the agent receives a `[truncated]` marker and can use the `recall(key)` memory tool to retrieve the full SharedWorkspace entry |
 | Debate non-convergence | `debate.py` | Medium | Hard cap of 3 rounds: after round 3 the last plan is used regardless of EA score. A score < 60 after the cap triggers a `known_issues` warning in the final output so the compiler flags it explicitly |

@@ -61,6 +61,10 @@ class MemoryManager:
     def get_compiler_context(self, task: str) -> str:
         return self.long_term.get_context_for_compiler(task)
 
+    def get_context_for_compiler(self, task: str) -> str:
+        """Alias used by compiler.py."""
+        return self.long_term.get_context_for_compiler(task)
+
     def get_workspace(self) -> SharedWorkspace | None:
         return self.workspace
 

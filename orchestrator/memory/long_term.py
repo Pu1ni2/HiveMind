@@ -23,16 +23,24 @@ class LongTermMemory:
 
     def _extract_learnings(self, ep: Episode):
         """Distill an episode into reusable memory entries."""
-        # 1. Plan pattern
         agents = ep.plan.get("agents", [])
         roles = [a.get("role", "") for a in agents]
-        if roles:
+
+        # Quality signal — only record plan patterns for episodes with a known outcome
+        # (either user-scored or issue-free).  Avoids polluting memory with failed plans.
+        score = ep.success_score or 0.0
+        has_issues = bool(ep.known_issues)
+        is_successful = score >= 7.0 or (score == 0.0 and not has_issues)
+
+        # 1. Plan pattern — only for successful runs
+        if roles and is_successful:
+            score_note = f" | user score: {score}/10" if score else ""
             entry = MemoryEntry(
                 entry_id=uuid.uuid4().hex[:12],
                 memory_type="plan_pattern",
                 content=(
                     f"For a '{ep.task_domain}' task at {ep.task_complexity} complexity, "
-                    f"a plan with {len(agents)} agents worked: {', '.join(roles)}. "
+                    f"a {len(agents)}-agent plan succeeded{score_note}: {', '.join(roles)}. "
                     f"Task was: {ep.task[:200]}"
                 ),
                 context={
@@ -40,45 +48,56 @@ class LongTermMemory:
                     "complexity": ep.task_complexity,
                     "agent_count": len(agents),
                     "roles": roles,
+                    "success_score": score,
                 },
                 source_episode_id=ep.episode_id,
             )
             self.store.save_memory_entry(entry)
             self.index.index_memory_entry(entry)
 
-        # 2. Lessons from known issues
+        # 2. Lessons from known issues — deduplicate against existing lessons
+        existing_lessons = {
+            e.content for e in self.store.get_entries_by_type("lesson_learned", limit=100)
+        }
         for issue in ep.known_issues:
             if not issue or len(issue) < 10:
+                continue
+            content = f"Issue in '{ep.task_domain}' task: {issue}"
+            # Skip near-duplicate lessons (same issue text already stored)
+            if any(issue[:60] in existing for existing in existing_lessons):
                 continue
             entry = MemoryEntry(
                 entry_id=uuid.uuid4().hex[:12],
                 memory_type="lesson_learned",
-                content=f"Issue encountered during '{ep.task_domain}' task: {issue}",
+                content=content,
                 context={"domain": ep.task_domain, "task_preview": ep.task[:150]},
                 source_episode_id=ep.episode_id,
             )
             self.store.save_memory_entry(entry)
             self.index.index_memory_entry(entry)
+            existing_lessons.add(content)
 
-        # 3. Agent strategies (which tools each agent used)
+        # 3. Agent strategies — record role + tools + effectiveness signal
         for agent_spec in agents:
             agent_id = agent_spec.get("id", "")
             output_info = ep.agent_outputs.get(agent_id, {})
             output_text = output_info.get("output", "") if isinstance(output_info, dict) else str(output_info)
             if len(output_text) > 50:
                 tools = [t.get("name", "") for t in agent_spec.get("tools_needed", [])]
+                effectiveness = "successful" if is_successful else "attempted (issues found)"
                 entry = MemoryEntry(
                     entry_id=uuid.uuid4().hex[:12],
                     memory_type="agent_strategy",
                     content=(
-                        f"Agent '{agent_spec.get('role', '')}' with tools [{', '.join(tools)}] "
-                        f"produced {len(output_text)} chars of output for objective: "
-                        f"{agent_spec.get('objective', '')[:200]}"
+                        f"Agent '{agent_spec.get('role', '')}' ({effectiveness}) "
+                        f"with tools [{', '.join(tools)}] "
+                        f"for objective: {agent_spec.get('objective', '')[:200]}"
                     ),
                     context={
                         "role": agent_spec.get("role", ""),
                         "tools": tools,
                         "output_length": len(output_text),
+                        "successful": is_successful,
                     },
                     source_episode_id=ep.episode_id,
                 )
