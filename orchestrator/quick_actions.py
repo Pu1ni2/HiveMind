@@ -21,7 +21,7 @@ from .integrations import (
     parse_resume, read_pdf, create_spreadsheet, send_webhook,
     create_kanban_board,
 )
-from .utils import parse_json_response
+from .utils import call_llm, parse_json_response
 
 
 QUICK_DETECT_PROMPT = """\
@@ -99,19 +99,15 @@ def try_quick_execute(task: str) -> dict | None:
     """
     emit("quick_detect_start", {"task": task[:100]})
 
-    model = ChatOpenAI(
-        model=PLANNER_MODEL,
-        api_key=OPENAI_API_KEY,
-        temperature=0,
-        model_kwargs={"response_format": {"type": "json_object"}},
-    )
-
     try:
-        response = model.invoke([
-            SystemMessage(content=QUICK_DETECT_PROMPT),
-            HumanMessage(content=f"Task:\n{task}"),
-        ])
-        decision = parse_json_response(response.content)
+        decision = call_llm(
+            PLANNER_MODEL,
+            QUICK_DETECT_PROMPT,
+            f"Task:\n{task}",
+            api_key=OPENAI_API_KEY,
+            temperature=0,
+            json_mode=True,
+        )
     except Exception as exc:
         print(f"[QUICK] Detection failed ({exc}), falling through to full pipeline")
         emit("quick_detect_done", {"mode": "full_pipeline", "reason": f"detection error: {exc}"})

@@ -22,6 +22,32 @@ from .agent_factory import make_agent_node
 from .compiler import compile_node, set_compiler_memory
 
 
+def _detect_cycles(depends_on: dict[str, list[str]]) -> list[str] | None:
+    """DFS-based cycle detection.  Returns the cycle path or None if acyclic."""
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color = {node: WHITE for node in depends_on}
+    path: list[str] = []
+
+    def dfs(node: str) -> bool:
+        color[node] = GRAY
+        path.append(node)
+        for dep in depends_on.get(node, []):
+            if color[dep] == GRAY:
+                path.append(dep)
+                return True
+            if color[dep] == WHITE and dfs(dep):
+                return True
+        color[node] = BLACK
+        path.pop()
+        return False
+
+    for node in list(depends_on):
+        if color[node] == WHITE:
+            if dfs(node):
+                return path
+    return None
+
+
 def build_graph(plan: dict, agent_bundles: dict[str, dict], memory=None):
     """Build and compile the orchestration graph.
 
@@ -69,23 +95,28 @@ def build_graph(plan: dict, agent_bundles: dict[str, dict], memory=None):
         for d in deps:
             depended_by[d].append(agent_id)
 
+    # ── Cycle detection ─────────────────────────────────────────────────
+    cycle = _detect_cycles(depends_on)
+    if cycle:
+        cycle_str = " -> ".join(cycle)
+        raise ValueError(
+            f"[GRAPH] Circular dependency detected in plan: {cycle_str}. "
+            "The Evaluator should have caught this — re-run the debate."
+        )
+
     # ── Add edges ───────────────────────────────────────────────────────
-    # Agents with no dependencies get edges from START
     root_agents = [aid for aid in agent_ids if not depends_on.get(aid)]
     for aid in root_agents:
         graph.add_edge(START, aid)
 
-    # Add dependency edges
     for agent_id, deps in depends_on.items():
         for dep in deps:
             graph.add_edge(dep, agent_id)
 
-    # Agents with no downstream dependents connect to compiler
     leaf_agents = [aid for aid in agent_ids if not depended_by.get(aid)]
     for aid in leaf_agents:
         graph.add_edge(aid, "compiler")
 
-    # compiler -> END
     graph.add_edge("compiler", END)
 
     # ── Compile ─────────────────────────────────────────────────────────
