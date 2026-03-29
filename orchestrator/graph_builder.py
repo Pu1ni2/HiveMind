@@ -22,7 +22,7 @@ from .agent_factory import make_agent_node
 from .compiler import compile_node
 
 
-def build_graph(plan: dict, agent_bundles: dict[str, dict]) -> any:
+def build_graph(plan: dict, agent_bundles: dict[str, dict]):
     """Build and compile the orchestration graph.
 
     Parameters

@@ -1,11 +1,11 @@
-/* ═══════════════════════════════════════════════════════════════════
+/* ===================================================================
    YCONIC Frontend — WebSocket-driven reactive UI
-   ═══════════════════════════════════════════════════════════════════ */
+   =================================================================== */
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
 
-// ── State ──────────────────────────────────────────────────────────
+// -- State ---------------------------------------------------------
 const state = {
     phase: "idle",        // idle | debate | forge | execute | compile | done | error
     task: "",
@@ -17,9 +17,11 @@ const state = {
     agentStreams: {},      // {agent_id: "streaming text so far"}
     sessionId: null,       // for interactive chat
     chatAgentId: null,     // currently chatting with
+    timerStart: null,      // timer start timestamp
+    timerInterval: null,   // timer setInterval handle
 };
 
-// ── Init ───────────────────────────────────────────────────────────
+// -- Init ----------------------------------------------------------
 document.addEventListener("DOMContentLoaded", () => {
     // Submit
     $("#submitBtn").addEventListener("click", handleSubmit);
@@ -51,14 +53,28 @@ document.addEventListener("DOMContentLoaded", () => {
         if (e.target === $("#chatModal")) closeChat();
     });
     $("#logClose").addEventListener("click", () => $("#logPanel").classList.remove("open"));
+
+    // New task button
+    $("#newTaskBtn").addEventListener("click", resetForNewTask);
+
+    // Error toast close
+    $("#errorToastClose").addEventListener("click", () => $("#errorToast").classList.add("hidden"));
 });
 
-// ── Submit ─────────────────────────────────────────────────────────
+// -- Submit --------------------------------------------------------
 function handleSubmit() {
     const task = $("#taskInput").value.trim();
-    if (!task || state.phase !== "idle") return;
+    if (!task || (state.phase !== "idle" && state.phase !== "done" && state.phase !== "error")) return;
 
     state.task = task;
+    state.phase = "idle";
+    state.logCount = 0;
+    state.agents = [];
+    state.agentStatuses = {};
+    state.agentOutputs = {};
+    state.agentStreams = {};
+    state.sessionId = null;
+
     $("#submitBtn").disabled = true;
     setStatus("processing", "Connecting...");
 
@@ -68,10 +84,73 @@ function handleSubmit() {
     $("#logToggle").classList.remove("hidden");
     $("#taskBarText").textContent = task;
 
+    // Reset phase containers
+    ["forgeContainer", "agentsContainer", "executionContainer",
+     "agentOutputsContainer", "filesContainer", "outputContainer", "completionCta"
+    ].forEach((id) => $(`#${id}`).classList.add("hidden"));
+    $("#debateMessages").innerHTML = "";
+    $("#forgeGrid").innerHTML = "";
+    $("#agentsGrid").innerHTML = "";
+    $("#executionGrid").innerHTML = "";
+    $("#agentOutputsList").innerHTML = "";
+    $("#filesList").innerHTML = "";
+    $("#filePreview").classList.add("hidden");
+    $("#outputContent").innerHTML = "";
+    $("#outputMeta").innerHTML = "";
+    $("#logMessages").innerHTML = "";
+    $("#logCount").textContent = "0";
+    $("#progressFill").style.width = "0%";
+    $$(".phase-item").forEach((el) => el.classList.remove("active", "done"));
+    $("#debateBadge").textContent = "Debating...";
+    $("#debateBadge").classList.remove("success");
+    $("#forgeBadge").textContent = "Forging...";
+    $("#forgeBadge").classList.remove("success");
+
+    // Start timer
+    startTimer();
+
     connectWS(task);
 }
 
-// ── WebSocket ──────────────────────────────────────────────────────
+// -- Timer ---------------------------------------------------------
+function startTimer() {
+    state.timerStart = Date.now();
+    const timerEl = $("#liveTimer");
+    timerEl.classList.remove("hidden");
+
+    if (state.timerInterval) clearInterval(state.timerInterval);
+    state.timerInterval = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - state.timerStart) / 1000);
+        const mins = Math.floor(elapsed / 60);
+        const secs = elapsed % 60;
+        $("#timerValue").textContent = `${mins}:${secs.toString().padStart(2, "0")}`;
+    }, 1000);
+}
+
+function stopTimer() {
+    if (state.timerInterval) {
+        clearInterval(state.timerInterval);
+        state.timerInterval = null;
+    }
+}
+
+// -- Reset for new task --------------------------------------------
+function resetForNewTask() {
+    stopTimer();
+    state.phase = "idle";
+
+    $("#heroSection").classList.remove("hidden");
+    $("#pipelineSection").classList.add("hidden");
+    $("#logToggle").classList.add("hidden");
+    $("#logPanel").classList.remove("open");
+    $("#liveTimer").classList.add("hidden");
+    $("#submitBtn").disabled = false;
+    $("#taskInput").value = "";
+    $("#taskInput").focus();
+    setStatus("ready", "Ready");
+}
+
+// -- WebSocket -----------------------------------------------------
 function connectWS(task) {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(`${proto}://${location.host}/ws`);
@@ -93,17 +172,29 @@ function connectWS(task) {
 
     ws.onerror = () => {
         setStatus("error", "Connection error");
-        addLog("error", "WebSocket error");
+        addLog("error", "WebSocket connection error");
+        showError("Connection failed. Is the server running at " + location.host + "?");
+        stopTimer();
     };
 
     ws.onclose = () => {
         if (state.phase !== "done" && state.phase !== "error") {
             setStatus("error", "Disconnected");
+            showError("WebSocket disconnected unexpectedly.");
+            stopTimer();
         }
     };
 }
 
-// ── Event router ───────────────────────────────────────────────────
+// -- Error toast ---------------------------------------------------
+function showError(msg) {
+    $("#errorToastMsg").textContent = msg;
+    const toast = $("#errorToast");
+    toast.classList.remove("hidden");
+    setTimeout(() => toast.classList.add("hidden"), 8000);
+}
+
+// -- Event router --------------------------------------------------
 function handleEvent(event) {
     const { type, data } = event;
 
@@ -111,7 +202,7 @@ function handleEvent(event) {
         case "pipeline_start":
             setPhase("debate");
             if (data.session_id) state.sessionId = data.session_id;
-            addLog("info", `Pipeline started: ${data.task?.substring(0, 60)}...`);
+            addLog("info", `Pipeline started`);
             break;
 
         case "debate_start":
@@ -121,7 +212,7 @@ function handleEvent(event) {
 
         case "debate_da_response":
             renderDAMessage(data);
-            addLog("info", `DA plan: ${data.plan?.agents?.length || "?"} agents (round ${data.round})`);
+            addLog("info", `DA proposed ${data.plan?.agents?.length || "?"} agents (round ${data.round})`);
             break;
 
         case "debate_eval_response":
@@ -149,7 +240,7 @@ function handleEvent(event) {
         case "forge_tool_done":
             updateForgeCard(data.tool_name, data.success ? "created" : "failed");
             addLog(data.success ? "success" : "error",
-                `${data.tool_name}: ${data.success ? "created" : "FAILED"}`);
+                `${data.tool_name}: ${data.success ? "ready" : "FAILED"}`);
             break;
 
         case "forge_complete":
@@ -214,6 +305,7 @@ function handleEvent(event) {
 
         case "pipeline_done":
             setPhase("done");
+            stopTimer();
             if (data.session_id) state.sessionId = data.session_id;
             renderOutput(data);
             addLog("success", "Pipeline complete!");
@@ -221,7 +313,9 @@ function handleEvent(event) {
 
         case "pipeline_error":
             setPhase("error");
+            stopTimer();
             setStatus("error", "Error");
+            showError(data.error || "Pipeline encountered an error");
             addLog("error", data.error || "Unknown error");
             break;
 
@@ -230,7 +324,7 @@ function handleEvent(event) {
     }
 }
 
-// ── Phase management ───────────────────────────────────────────────
+// -- Phase management ----------------------------------------------
 function setPhase(phase) {
     state.phase = phase;
 
@@ -259,7 +353,6 @@ function setPhase(phase) {
         done: "outputContainer",
     };
 
-    // Show current and keep previous visible
     Object.entries(containers).forEach(([p, id]) => {
         const el = $(`#${id}`);
         if (!el) return;
@@ -286,16 +379,17 @@ function setStatus(type, text) {
     dot.className = "status-dot";
     if (type === "processing") dot.classList.add("processing");
     else if (type === "error") dot.classList.add("error");
+    else if (type === "done") dot.classList.add("done");
     $("#statusLabel").textContent = text;
 }
 
-// ── Debate rendering ───────────────────────────────────────────────
+// -- Debate rendering ----------------------------------------------
 function renderDAMessage(data) {
     const container = $("#debateMessages");
     const agents = data.plan?.agents || [];
 
     const agentChips = agents
-        .map((a) => `<span class="agent-chip">${a.role}</span>`)
+        .map((a) => `<span class="agent-chip">${escapeHTML(a.role)}</span>`)
         .join("");
 
     const msg = document.createElement("div");
@@ -322,10 +416,17 @@ function renderEvalMessage(data) {
             .map(
                 (i) =>
                     `<div class="debate-issue">
-                        <span class="issue-sev ${i.severity || ""}">${i.severity || "?"}</span>
-                        <span>${i.description || ""}</span>
+                        <span class="issue-sev ${(i.severity || "").toLowerCase()}">${escapeHTML(i.severity || "?")}</span>
+                        <span>${escapeHTML(i.description || "")}</span>
                     </div>`
             )
+            .join("")}</div>`;
+    }
+
+    let strengthsHTML = "";
+    if (data.strengths?.length) {
+        strengthsHTML = `<div class="debate-strengths">${data.strengths
+            .map((s) => `<span class="strength-chip">${escapeHTML(s)}</span>`)
             .join("")}</div>`;
     }
 
@@ -337,27 +438,25 @@ function renderEvalMessage(data) {
             <span class="debate-msg-round">Round ${data.round}</span>
             <span class="debate-score ${scoreClass}">${data.score}/10</span>
         </div>
-        <div><strong>${data.verdict}</strong></div>
+        <div><strong>${escapeHTML(data.verdict)}</strong></div>
+        ${strengthsHTML}
         ${issuesHTML}
     `;
     container.appendChild(msg);
     msg.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
-// ── Forge rendering ────────────────────────────────────────────────
+// -- Forge rendering -----------------------------------------------
 function addForgeCard(data, status) {
     const grid = $("#forgeGrid");
-    const icon = status === "forging" ? "\u2692" : status === "created" ? "\u2713" : "\u2717";
-    const statusLabel = status === "forging" ? "Generating code..." : status === "created" ? "Ready" : "Failed";
-
     const card = document.createElement("div");
     card.className = `forge-card ${status} stagger-${grid.children.length % 8 + 1}`;
-    card.id = `forge-${data.tool_name}`;
+    card.id = `forge-${CSS.escape(data.tool_name)}`;
     card.innerHTML = `
         <div class="forge-card-header">
-            <div class="forge-card-icon">${icon}</div>
+            <div class="forge-card-icon forge-spinner"></div>
             <div class="forge-card-name">${escapeHTML(data.tool_name)}</div>
-            <div class="forge-card-status-label ${status}">${statusLabel}</div>
+            <div class="forge-card-status-label ${status}">Generating...</div>
         </div>
         <div class="forge-card-desc">${escapeHTML(data.description || "Dynamic tool")}</div>
         <div class="forge-card-detail">
@@ -365,7 +464,8 @@ function addForgeCard(data, status) {
             <span class="forge-card-detail-value">${escapeHTML(data.agent_id || "?")}</span>
         </div>
         <div class="forge-card-badge">
-            <span class="tool-tag">LLM-generated Python</span>
+            <span class="tool-tag">LLM-generated</span>
+            <span class="tool-tag">AST-validated</span>
             <span class="tool-tag">Runtime compiled</span>
         </div>
     `;
@@ -373,14 +473,22 @@ function addForgeCard(data, status) {
 }
 
 function updateForgeCard(toolName, status) {
-    const card = $(`#forge-${toolName}`);
+    const card = document.getElementById(`forge-${CSS.escape(toolName)}`);
     if (!card) return;
     card.className = `forge-card ${status}`;
     const icon = card.querySelector(".forge-card-icon");
-    if (icon) icon.textContent = status === "created" ? "\u2713" : "\u2717";
+    if (icon) {
+        icon.classList.remove("forge-spinner");
+        icon.textContent = status === "created" ? "\u2713" : "\u2717";
+    }
+    const label = card.querySelector(".forge-card-status-label");
+    if (label) {
+        label.className = `forge-card-status-label ${status}`;
+        label.textContent = status === "created" ? "Ready" : "Failed";
+    }
 }
 
-// ── Agent rendering ────────────────────────────────────────────────
+// -- Agent rendering -----------------------------------------------
 function renderAgentCards() {
     const grid = $("#agentsGrid");
     grid.innerHTML = "";
@@ -388,16 +496,16 @@ function renderAgentCards() {
     state.agents.forEach((agent, i) => {
         const status = state.agentStatuses[agent.id] || "waiting";
         const toolTags = (agent.tools || [])
-            .map((t) => `<span class="tool-tag">${t}</span>`)
+            .map((t) => `<span class="tool-tag">${escapeHTML(t)}</span>`)
             .join("");
 
         const depsText = (agent.depends_on || []).length
-            ? `<div class="agent-card-row"><span class="agent-card-label">Depends on:</span> <span>${agent.depends_on.join(", ")}</span></div>`
+            ? `<div class="agent-card-row"><span class="agent-card-label">Depends on:</span> <span>${agent.depends_on.map(escapeHTML).join(", ")}</span></div>`
             : "";
 
         const card = document.createElement("div");
         card.className = `agent-card ${status} stagger-${(i % 8) + 1}`;
-        card.id = `agent-${agent.id}`;
+        card.id = `agents-${agent.id}`;
         card.innerHTML = `
             <div class="agent-card-header">
                 <div class="agent-card-role">${escapeHTML(agent.role || agent.id)}</div>
@@ -426,20 +534,18 @@ function renderAgentCards() {
                 </span>
             </div>
         `;
-
-        // Click to expand/collapse details
         card.addEventListener("click", () => card.classList.toggle("expanded"));
         grid.appendChild(card);
     });
 
-    // Clone for execution grid
+    // Execution grid (compact)
     const execGrid = $("#executionGrid");
     execGrid.innerHTML = "";
     state.agents.forEach((agent, i) => {
         const status = state.agentStatuses[agent.id] || "waiting";
         const card = document.createElement("div");
         card.className = `agent-card ${status} stagger-${(i % 8) + 1}`;
-        card.id = `agent-${agent.id}`;
+        card.id = `exec-${agent.id}`;
         card.innerHTML = `
             <div class="agent-card-header">
                 <div class="agent-card-role">${escapeHTML(agent.role || agent.id)}</div>
@@ -454,27 +560,24 @@ function renderAgentCards() {
 function updateAgentCard(agentId) {
     const status = state.agentStatuses[agentId] || "waiting";
 
-    // Update in both grids
-    [`#agent-${agentId}`, `#executionGrid #agent-${agentId}`].forEach((sel) => {
-        // Try both containers
-        document.querySelectorAll(`[id="agent-${agentId}"]`).forEach((card) => {
-            card.className = `agent-card ${status}`;
-            const badge = card.querySelector(".agent-card-status");
-            if (badge) {
-                badge.className = `agent-card-status ${status}`;
-                badge.textContent = status;
-            }
+    // Update in all grids (agents grid + execution grid)
+    document.querySelectorAll(`#agents-${CSS.escape(agentId)}, #exec-${CSS.escape(agentId)}`).forEach((card) => {
+        card.className = card.className.replace(/\b(waiting|running|done|error)\b/, status);
+        const badge = card.querySelector(".agent-card-status");
+        if (badge) {
+            badge.className = `agent-card-status ${status}`;
+            badge.textContent = status;
+        }
 
-            // Add output preview if done
-            if (status === "done" && state.agentOutputs[agentId]) {
-                if (!card.querySelector(".agent-output-preview")) {
-                    const preview = document.createElement("div");
-                    preview.className = "agent-output-preview";
-                    preview.textContent = state.agentOutputs[agentId].substring(0, 200) + "...";
-                    card.appendChild(preview);
-                }
+        // Add output preview if done
+        if (status === "done" && state.agentOutputs[agentId]) {
+            if (!card.querySelector(".agent-output-preview")) {
+                const preview = document.createElement("div");
+                preview.className = "agent-output-preview";
+                preview.textContent = state.agentOutputs[agentId].substring(0, 200) + "...";
+                card.appendChild(preview);
             }
-        });
+        }
     });
 
     // Update progress during execution
@@ -485,9 +588,9 @@ function updateAgentCard(agentId) {
     $("#execBadge").textContent = `${doneCount}/${total} done`;
 }
 
-// ── Output rendering ───────────────────────────────────────────────
+// -- Output rendering ----------------------------------------------
 function renderOutput(data) {
-    // ── Render agent work products ─────────────────────────────────
+    // -- Render agent work products --------------------------------
     const agentOutputs = data.agent_outputs || {};
     if (Object.keys(agentOutputs).length > 0) {
         $("#agentOutputsContainer").classList.remove("hidden");
@@ -511,7 +614,7 @@ function renderOutput(data) {
                     </div>
                 </div>
                 <div class="agent-output-body">
-                    <div class="agent-output-content">${escapeHTML(info.output || "No output")}</div>
+                    <div class="agent-output-content">${renderMarkdownSafe(info.output || "No output")}</div>
                 </div>
             `;
             item.querySelector(".agent-output-header").addEventListener("click", (e) => {
@@ -526,20 +629,21 @@ function renderOutput(data) {
         });
     }
 
-    // ── Load generated files ───────────────────────────────────────
+    // -- Load generated files --------------------------------------
     loadOutputFiles();
 
-    // ── Render final deliverable ───────────────────────────────────
+    // -- Render final deliverable ----------------------------------
     const raw = data.final_output || "No output produced.";
-    const html = typeof marked !== "undefined" ? marked.parse(raw) : raw.replace(/\n/g, "<br>");
-    $("#outputContent").innerHTML = html;
+    $("#outputContent").innerHTML = renderMarkdownSafe(raw);
 
-    // Stats
+    // -- Stats -----------------------------------------------------
     const meta = data.metadata || {};
     const issues = data.known_issues || [];
+    const elapsed = state.timerStart ? Math.round((Date.now() - state.timerStart) / 1000) : meta.total_time_s || "?";
+
     $("#outputMeta").innerHTML = `
         <div class="stat">
-            <div class="stat-value">${meta.total_time_s || "?"}s</div>
+            <div class="stat-value">${elapsed}s</div>
             <div class="stat-label">Total Time</div>
         </div>
         <div class="stat">
@@ -564,18 +668,19 @@ function renderOutput(data) {
         </div>` : ""}
     `;
 
-    // Scroll to agent outputs first
+    // Show completion CTA
+    $("#completionCta").classList.remove("hidden");
+    $("#submitBtn").disabled = false;
+
+    // Scroll
     if (Object.keys(agentOutputs).length > 0) {
         $("#agentOutputsContainer").scrollIntoView({ behavior: "smooth" });
     } else {
         $("#outputContainer").scrollIntoView({ behavior: "smooth" });
     }
-
-    // Re-enable submit for another run
-    $("#submitBtn").disabled = false;
 }
 
-// ── File browser ───────────────────────────────────────────────────
+// -- File browser --------------------------------------------------
 async function loadOutputFiles() {
     try {
         const resp = await fetch("/api/files");
@@ -593,11 +698,14 @@ async function loadOutputFiles() {
                 ? `${(file.size / 1024).toFixed(1)} KB`
                 : `${file.size} B`;
 
+            const ext = file.name.split(".").pop().toLowerCase();
+            const icon = { md: "\ud83d\udcc4", json: "\ud83d\udcca", html: "\ud83c\udf10", csv: "\ud83d\udcca", txt: "\ud83d\udcc3" }[ext] || "\ud83d\udcc4";
+
             const item = document.createElement("div");
             item.className = "file-item";
             item.innerHTML = `
                 <div class="file-item-name">
-                    <span class="file-item-icon">\u{1F4C4}</span>
+                    <span class="file-item-icon">${icon}</span>
                     <span>${escapeHTML(file.name)}</span>
                 </div>
                 <span class="file-item-size">${sizeStr}</span>
@@ -617,12 +725,21 @@ async function loadFilePreview(filename) {
 
         const preview = $("#filePreview");
         preview.classList.remove("hidden");
+
+        const ext = filename.split(".").pop().toLowerCase();
+        let contentHTML;
+        if (ext === "md") {
+            contentHTML = renderMarkdownSafe(data.content);
+        } else {
+            contentHTML = `<pre>${escapeHTML(data.content)}</pre>`;
+        }
+
         preview.innerHTML = `
             <div class="file-preview-header">
-                <span>\u{1F4C4} ${escapeHTML(data.name)}</span>
-                <span class="file-item-size">${data.size} chars</span>
+                <span>${escapeHTML(data.name)}</span>
+                <span class="file-item-size">${(data.size / 1024).toFixed(1)} KB</span>
             </div>
-            <div class="file-preview-content">${escapeHTML(data.content)}</div>
+            <div class="file-preview-content">${contentHTML}</div>
         `;
         preview.scrollIntoView({ behavior: "smooth", block: "nearest" });
     } catch (e) {
@@ -630,7 +747,7 @@ async function loadFilePreview(filename) {
     }
 }
 
-// ── Activity log ───────────────────────────────────────────────────
+// -- Activity log --------------------------------------------------
 function addLog(level, text) {
     state.logCount++;
     $("#logCount").textContent = state.logCount;
@@ -645,38 +762,36 @@ function addLog(level, text) {
     container.scrollTop = container.scrollHeight;
 }
 
-// ── Agent streaming ────────────────────────────────────────────────
+// -- Agent streaming -----------------------------------------------
 function appendAgentStream(agentId, text, isToolEvent = false) {
     if (!state.agentStreams[agentId]) state.agentStreams[agentId] = "";
     state.agentStreams[agentId] += text;
 
-    // Find stream container in execution grid
-    const cards = document.querySelectorAll(`[id="agent-${agentId}"]`);
-    cards.forEach((card) => {
-        let stream = card.querySelector(".agent-stream");
-        if (!stream) {
-            stream = document.createElement("div");
-            stream.className = "agent-stream";
-            card.appendChild(stream);
-        }
+    const card = document.getElementById(`exec-${CSS.escape(agentId)}`);
+    if (!card) return;
 
-        if (isToolEvent) {
-            stream.innerHTML += `<span class="tool-call">${escapeHTML(text)}</span>`;
-        } else {
-            // Remove old cursor, add text, add new cursor
-            const cursor = stream.querySelector(".cursor");
-            if (cursor) cursor.remove();
-            stream.appendChild(document.createTextNode(text));
-            const c = document.createElement("span");
-            c.className = "cursor";
-            stream.appendChild(c);
-        }
+    let stream = card.querySelector(".agent-stream");
+    if (!stream) {
+        stream = document.createElement("div");
+        stream.className = "agent-stream";
+        card.appendChild(stream);
+    }
 
-        stream.scrollTop = stream.scrollHeight;
-    });
+    if (isToolEvent) {
+        stream.innerHTML += `<span class="tool-call">${escapeHTML(text)}</span>`;
+    } else {
+        const cursor = stream.querySelector(".cursor");
+        if (cursor) cursor.remove();
+        stream.appendChild(document.createTextNode(text));
+        const c = document.createElement("span");
+        c.className = "cursor";
+        stream.appendChild(c);
+    }
+
+    stream.scrollTop = stream.scrollHeight;
 }
 
-// ── Interactive chat ───────────────────────────────────────────────
+// -- Interactive chat ----------------------------------------------
 function openChat(agentId, role) {
     state.chatAgentId = agentId;
     $("#chatAgentRole").textContent = role;
@@ -685,8 +800,7 @@ function openChat(agentId, role) {
     $("#chatInput").value = "";
     $("#chatModal").classList.remove("hidden");
 
-    // Add welcome message
-    addChatMsg("agent", `Hi! I'm the ${role}. I just completed my work on this task. Ask me anything about my findings, or request changes and deeper analysis.`);
+    addChatMsg("agent", `Hi! I'm the **${role}**. I just completed my work on this task. Ask me anything about my findings, or request changes and deeper analysis.`);
     $("#chatInput").focus();
 }
 
@@ -699,8 +813,8 @@ function addChatMsg(role, text) {
     const container = $("#chatMessages");
     const msg = document.createElement("div");
     msg.className = `chat-msg ${role}`;
-    if (typeof marked !== "undefined" && role === "agent") {
-        msg.innerHTML = marked.parse(text);
+    if (role === "agent") {
+        msg.innerHTML = renderMarkdownSafe(text);
     } else {
         msg.textContent = text;
     }
@@ -717,7 +831,6 @@ async function sendChat() {
     input.value = "";
     addChatMsg("user", message);
 
-    // Show typing indicator
     const typing = addChatMsg("agent", "Thinking...");
     typing.classList.add("typing");
     $("#chatSend").disabled = true;
@@ -733,8 +846,6 @@ async function sendChat() {
             }),
         });
         const data = await resp.json();
-
-        // Replace typing with actual response
         typing.remove();
 
         if (data.error) {
@@ -751,9 +862,17 @@ async function sendChat() {
     input.focus();
 }
 
-// ── Helpers ────────────────────────────────────────────────────────
+// -- Helpers -------------------------------------------------------
 function escapeHTML(str) {
+    if (!str) return "";
     const div = document.createElement("div");
     div.textContent = str;
     return div.innerHTML;
+}
+
+function renderMarkdownSafe(text) {
+    if (typeof marked !== "undefined") {
+        return marked.parse(text);
+    }
+    return escapeHTML(text).replace(/\n/g, "<br>");
 }

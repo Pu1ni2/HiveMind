@@ -3,13 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Autonomous Multi-Agent Orchestration</title>
+    <title>YCONIC — Autonomous Multi-Agent Orchestration</title>
+    <meta name="description" content="YCONIC dynamically creates AI agent teams that debate, forge custom tools, and execute complex tasks autonomously.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" defer></script>
     <meta name="theme-color" content="#09090b">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x2B21;</text></svg>">
 </head>
 <body>
     <div id="app">
@@ -29,9 +31,15 @@
                     </div>
                     <span class="logo-text">YCONIC</span>
                 </div>
-                <div class="header-status">
-                    <div class="status-dot" id="statusDot"></div>
-                    <span class="status-label" id="statusLabel">Ready</span>
+                <div class="header-right">
+                    <div class="live-timer hidden" id="liveTimer">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                        <span id="timerValue">0:00</span>
+                    </div>
+                    <div class="header-status">
+                        <div class="status-dot" id="statusDot"></div>
+                        <span class="status-label" id="statusLabel">Ready</span>
+                    </div>
                 </div>
             </div>
         </header>
@@ -39,17 +47,18 @@
         <!-- ─── Hero / Input ───────────────────────────────────────── -->
         <section id="heroSection" class="hero">
             <div class="hero-content">
+                <div class="hero-badge">Autonomous Agent Orchestration Engine</div>
                 <h1 class="hero-title">
                     <span class="gradient-text">Build anything</span> with
                     <br>autonomous AI agents
                 </h1>
                 <p class="hero-subtitle">
-                    Describe a task. YCONIC debates, plans, forges custom tools,
-                    and deploys a team of AI agents to execute it — all dynamically.
+                    Describe a complex task. YCONIC debates a plan, forges custom tools on-the-fly,
+                    and deploys a team of specialized AI agents to execute it — all dynamically, in real time.
                 </p>
 
                 <div class="input-group">
-                    <textarea id="taskInput" class="task-input" placeholder="What would you like to build today?" rows="3" spellcheck="false"></textarea>
+                    <textarea id="taskInput" class="task-input" placeholder="Describe a complex task... e.g. &quot;Build a go-to-market strategy for a fintech startup targeting Gen Z&quot;" rows="3" spellcheck="false"></textarea>
                     <button id="submitBtn" class="btn-primary" type="button">
                         <span class="btn-label">Launch</span>
                         <svg class="btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
@@ -62,6 +71,33 @@
                     <button class="chip" data-task="Build a complete startup plan for an AI-powered tutoring company targeting college students">AI Startup Plan</button>
                     <button class="chip" data-task="Create a comprehensive marketing campaign for a sustainable fashion brand launching in 2026">Marketing Campaign</button>
                     <button class="chip" data-task="Design a full-stack web application architecture for a real-time collaborative document editor">App Architecture</button>
+                </div>
+
+                <!-- How it works -->
+                <div class="how-it-works">
+                    <div class="how-step">
+                        <div class="how-step-num">1</div>
+                        <div class="how-step-title">Debate</div>
+                        <div class="how-step-desc">DA proposes a plan, Evaluator critiques — iterative refinement</div>
+                    </div>
+                    <div class="how-arrow">&#8594;</div>
+                    <div class="how-step">
+                        <div class="how-step-num">2</div>
+                        <div class="how-step-title">Forge</div>
+                        <div class="how-step-desc">LLM generates custom Python tools, validated and compiled at runtime</div>
+                    </div>
+                    <div class="how-arrow">&#8594;</div>
+                    <div class="how-step">
+                        <div class="how-step-num">3</div>
+                        <div class="how-step-title">Execute</div>
+                        <div class="how-step-desc">Agents run in parallel via LangGraph, using forged tools on real data</div>
+                    </div>
+                    <div class="how-arrow">&#8594;</div>
+                    <div class="how-step">
+                        <div class="how-step-num">4</div>
+                        <div class="how-step-title">Compile</div>
+                        <div class="how-step-desc">All outputs assembled into a single, polished deliverable</div>
+                    </div>
                 </div>
             </div>
         </section>
@@ -109,6 +145,7 @@
                     <h2 class="section-title">Tool Forge</h2>
                     <span class="section-badge" id="forgeBadge">Forging...</span>
                 </div>
+                <p class="section-desc">LLM is writing Python functions, validating with AST, and compiling at runtime.</p>
                 <div id="forgeGrid" class="card-grid"></div>
             </div>
 
@@ -136,7 +173,7 @@
                     <h2 class="section-title">Agent Work Products</h2>
                     <span class="section-badge" id="outputsBadge"></span>
                 </div>
-                <p class="section-desc">Full output from each agent — click to expand and see exactly what they produced.</p>
+                <p class="section-desc">Full output from each agent — click to expand. Click <strong>Chat</strong> to ask follow-ups.</p>
                 <div id="agentOutputsList" class="agent-outputs-list"></div>
             </div>
 
@@ -158,6 +195,14 @@
                 </div>
                 <div id="outputContent" class="output-content"></div>
                 <div id="outputMeta" class="output-meta"></div>
+            </div>
+
+            <!-- ── Completion CTA ────────────────────────────────────── -->
+            <div id="completionCta" class="completion-cta hidden">
+                <button id="newTaskBtn" class="btn-primary-lg" type="button">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    <span>New Task</span>
+                </button>
             </div>
         </section>
 
@@ -190,6 +235,14 @@
                 <input id="chatInput" class="chat-input" type="text" placeholder="Ask this agent anything..." autocomplete="off">
                 <button id="chatSend" class="btn-primary-sm">Send</button>
             </div>
+        </div>
+    </div>
+
+    <!-- ─── Error Toast ─────────────────────────────────────────── -->
+    <div id="errorToast" class="error-toast hidden">
+        <div class="error-toast-inner">
+            <span id="errorToastMsg"></span>
+            <button id="errorToastClose" class="btn-ghost-sm">&times;</button>
         </div>
     </div>
 

@@ -5,6 +5,7 @@ for real-time pipeline streaming + interactive agent chat.
 
 import asyncio
 import os
+import time
 import threading
 import queue
 import json
@@ -13,6 +14,7 @@ import uuid
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from langchain_openai import ChatOpenAI
@@ -25,8 +27,29 @@ from orchestrator.config import OPENAI_API_KEY
 
 app = FastAPI(title="YCONIC")
 
+# ── CORS (for hackathon demo flexibility) ─────────────────────────
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # ── Session storage for post-run interactive chat ───────────────────
 _sessions: dict[str, dict] = {}
+_SESSION_TTL = 3600  # 1 hour
+_MAX_SESSIONS = 20
+
+
+def _cleanup_sessions():
+    """Evict oldest sessions when over limit or expired."""
+    now = time.time()
+    expired = [k for k, v in _sessions.items() if now - v.get("created_at", 0) > _SESSION_TTL]
+    for k in expired:
+        del _sessions[k]
+    while len(_sessions) > _MAX_SESSIONS:
+        oldest = min(_sessions, key=lambda k: _sessions[k].get("created_at", 0))
+        del _sessions[oldest]
 
 
 # ── REST endpoint (fallback / testing) ──────────────────────────────
@@ -74,11 +97,13 @@ async def websocket_endpoint(ws: WebSocket):
                 result_holder["result"] = result
 
                 # Store session for interactive chat
+                _cleanup_sessions()
                 _sessions[session_id] = {
                     "task": task,
                     "plan": result.get("plan", {}),
                     "agent_outputs": result.get("agent_outputs", {}),
                     "chat_histories": {},  # {agent_id: [messages]}
+                    "created_at": time.time(),
                 }
 
                 bus.emit("pipeline_done", {
@@ -231,12 +256,17 @@ async def list_output_files():
 
 @app.get("/api/files/{filename}")
 async def read_output_file(filename: str):
-    filepath = os.path.join(OUTPUT_DIR, filename)
-    if not os.path.exists(filepath) or not os.path.isfile(filepath):
+    # Sanitize — prevent path traversal
+    safe_name = os.path.basename(filename)
+    filepath = os.path.join(OUTPUT_DIR, safe_name)
+    resolved = os.path.realpath(filepath)
+    if not resolved.startswith(os.path.realpath(OUTPUT_DIR)):
+        return PlainTextResponse("Access denied", status_code=403)
+    if not os.path.exists(resolved) or not os.path.isfile(resolved):
         return PlainTextResponse("File not found", status_code=404)
-    with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+    with open(resolved, "r", encoding="utf-8", errors="replace") as f:
         content = f.read()
-    return {"name": filename, "content": content, "size": len(content)}
+    return {"name": safe_name, "content": content, "size": len(content)}
 
 
 # ── Serve frontend ──────────────────────────────────────────────────
@@ -250,6 +280,5 @@ app.mount("/css", StaticFiles(directory="frontend/css"), name="css")
 app.mount("/js", StaticFiles(directory="frontend/js"), name="js")
 
 # Serve output files (so generated HTML forms can be opened in browser)
-import os as _os
-_os.makedirs("output", exist_ok=True)
+os.makedirs("output", exist_ok=True)
 app.mount("/output", StaticFiles(directory="output", html=True), name="output")

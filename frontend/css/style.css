@@ -1105,7 +1105,200 @@ body {
 .stagger-7 { animation-delay: .35s; }
 .stagger-8 { animation-delay: .40s; }
 
+/* ── Hero badge ─────────────────────────────────────────────────── */
+.hero-badge {
+    display: inline-block;
+    padding: 6px 16px;
+    font-size: .72rem;
+    font-weight: 600;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--accent);
+    background: var(--accent-glow);
+    border: 1px solid rgba(99,102,241,.15);
+    border-radius: var(--radius-pill);
+    margin-bottom: 20px;
+    animation: fadeInUp .7s var(--ease-out) both;
+}
+
+/* ── How it works ──────────────────────────────────────────────── */
+.how-it-works {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 48px;
+    padding: 28px 24px;
+    background: rgba(255,255,255,.02);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    animation: fadeInUp .7s .45s var(--ease-out) both;
+}
+.how-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    text-align: center;
+    max-width: 160px;
+}
+.how-step-num {
+    width: 28px; height: 28px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%;
+    font-size: .72rem; font-weight: 700;
+    color: #fff;
+    background: linear-gradient(135deg, var(--accent-vivid), var(--accent-alt));
+}
+.how-step-title {
+    font-size: .82rem; font-weight: 700;
+    color: var(--text-primary);
+}
+.how-step-desc {
+    font-size: .7rem;
+    color: var(--text-faint);
+    line-height: 1.45;
+}
+.how-arrow {
+    color: var(--text-faint);
+    font-size: 1.2rem;
+    margin-top: 4px;
+    flex-shrink: 0;
+}
+
+/* ── Live timer (header) ───────────────────────────────────────── */
+.header-right {
+    display: flex; align-items: center; gap: 16px;
+}
+.live-timer {
+    display: flex; align-items: center; gap: 6px;
+    font-family: var(--font-mono);
+    font-size: .82rem;
+    font-weight: 600;
+    color: var(--accent);
+    padding: 4px 12px;
+    background: var(--accent-glow);
+    border-radius: var(--radius-pill);
+    animation: pulse 2s ease-in-out infinite;
+}
+
+/* ── Status dot: done state ────────────────────────────────────── */
+.status-dot.done {
+    background: var(--success);
+    box-shadow: 0 0 8px rgba(52,211,153,.3);
+}
+
+/* ── Completion CTA ────────────────────────────────────────────── */
+.completion-cta {
+    display: flex;
+    justify-content: center;
+    padding: 32px 0 48px;
+    animation: fadeInUp .5s var(--ease-out) both;
+}
+.btn-primary-lg {
+    display: inline-flex;
+    align-items: center; gap: 8px;
+    padding: 14px 32px;
+    background: linear-gradient(135deg, var(--accent-vivid), var(--accent-alt));
+    color: #fff;
+    font-family: var(--font-sans);
+    font-size: .95rem; font-weight: 600;
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: transform .2s var(--ease-out), box-shadow .2s;
+}
+.btn-primary-lg:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 32px rgba(99,102,241,.35);
+}
+.btn-primary-lg:active { transform: translateY(0); }
+
+/* ── Error toast ───────────────────────────────────────────────── */
+.error-toast {
+    position: fixed;
+    top: 72px; left: 50%;
+    transform: translateX(-50%);
+    z-index: 300;
+    animation: fadeInUp .3s var(--ease-out) both;
+}
+.error-toast-inner {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 20px;
+    background: rgba(248,113,113,.12);
+    border: 1px solid rgba(248,113,113,.3);
+    border-radius: var(--radius-md);
+    color: var(--error);
+    font-size: .85rem;
+    font-weight: 500;
+    box-shadow: 0 8px 32px rgba(0,0,0,.3);
+    backdrop-filter: blur(12px);
+}
+
+/* ── Forge spinner ─────────────────────────────────────────────── */
+.forge-spinner {
+    width: 30px; height: 30px;
+    border: 2px solid rgba(251,191,36,.15);
+    border-top-color: var(--warning);
+    border-radius: 50%;
+    animation: spin .8s linear infinite;
+}
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ── Evaluator strengths chips ─────────────────────────────────── */
+.debate-strengths {
+    display: flex; flex-wrap: wrap; gap: 5px;
+    margin-top: 8px; margin-bottom: 6px;
+}
+.strength-chip {
+    display: inline-flex; padding: 2px 8px;
+    font-size: .68rem; font-weight: 500;
+    background: rgba(52,211,153,.08);
+    border: 1px solid rgba(52,211,153,.15);
+    border-radius: var(--radius-pill);
+    color: var(--success);
+}
+
+/* ── Issue severity (lowercase from JS) ───────────────────────── */
+.issue-sev.critical { background: rgba(248,113,113,.15); color: var(--error); }
+.issue-sev.major    { background: rgba(251,191,36,.12); color: var(--warning); }
+.issue-sev.minor    { background: rgba(255,255,255,.06); color: var(--text-muted); }
+
+/* ── Markdown inside agent outputs ─────────────────────────────── */
+.agent-output-content h1, .agent-output-content h2, .agent-output-content h3 {
+    color: var(--text-primary); margin-top: 16px; margin-bottom: 6px;
+}
+.agent-output-content h1 { font-size: 1.2rem; }
+.agent-output-content h2 { font-size: 1.05rem; }
+.agent-output-content h3 { font-size: .95rem; }
+.agent-output-content p  { margin-bottom: 10px; }
+.agent-output-content ul, .agent-output-content ol { padding-left: 20px; margin-bottom: 10px; }
+.agent-output-content li { margin-bottom: 3px; }
+.agent-output-content strong { color: var(--text-primary); }
+.agent-output-content code {
+    background: rgba(255,255,255,.06);
+    padding: 1px 5px; border-radius: 3px;
+    font-family: var(--font-mono); font-size: .85em;
+}
+
+/* File preview markdown */
+.file-preview-content h1, .file-preview-content h2, .file-preview-content h3 {
+    color: var(--text-primary); margin-top: 12px; margin-bottom: 6px;
+}
+.file-preview-content p { margin-bottom: 8px; }
+.file-preview-content ul, .file-preview-content ol { padding-left: 20px; margin-bottom: 8px; }
+.file-preview-content strong { color: var(--text-primary); }
+
 /* ── Responsive ─────────────────────────────────────────────────── */
+@media (max-width: 1024px) {
+    .how-it-works { gap: 8px; padding: 20px 16px; }
+    .how-step { max-width: 130px; }
+    .how-step-desc { font-size: .65rem; }
+    .how-arrow { font-size: 1rem; }
+}
+
 @media (max-width: 640px) {
     .hero-title { font-size: 1.8rem; }
     .hero { padding: 60px 16px 40px; }
@@ -1113,4 +1306,10 @@ body {
     .card-grid { grid-template-columns: 1fr; }
     .output-content { padding: 20px; }
     .log-panel { width: calc(100vw - 32px); right: 16px; }
+    .how-it-works {
+        flex-direction: column;
+        align-items: center;
+    }
+    .how-arrow { transform: rotate(90deg); }
+    .how-step { max-width: 280px; }
 }
