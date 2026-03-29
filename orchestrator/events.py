@@ -11,6 +11,7 @@ are no-ops if no bus is set (i.e. CLI mode still works).
 """
 
 import queue
+import threading
 from datetime import datetime, timezone
 
 
@@ -38,15 +39,21 @@ class EventBus:
         return self._queue.empty()
 
 
-# ── Module-level singleton ──────────────────────────────────────────
-_bus: EventBus | None = None
+# ── Thread-local bus storage — each pipeline thread has its own bus ──
+_local = threading.local()
 
 
 def set_bus(bus: EventBus | None):
-    global _bus
-    _bus = bus
+    """Attach an EventBus to the current thread.
+
+    Using thread-local storage means concurrent pipeline executions
+    (e.g. multiple WebSocket sessions) each stream to their own bus
+    without cross-talk.
+    """
+    _local.bus = bus
 
 
 def emit(event_type: str, data: dict | None = None):
-    if _bus is not None:
-        _bus.emit(event_type, data)
+    bus: EventBus | None = getattr(_local, "bus", None)
+    if bus is not None:
+        bus.emit(event_type, data)

@@ -31,11 +31,17 @@ def _get_collection(persist_dir: str):
 
 
 class SemanticIndex:
-    """Vector search over episodes and memory entries."""
+    """Vector search over episodes and memory entries.
 
-    def __init__(self, persist_dir: str):
+    Primary: ChromaDB cosine similarity search.
+    Fallback: SQLite LIKE-based full-text search via MemoryStore when
+              ChromaDB is unavailable (import error or init failure).
+    """
+
+    def __init__(self, persist_dir: str, store=None):
         self._persist_dir = persist_dir
         self._available = None
+        self._store = store  # MemoryStore reference for SQLite fallback
 
     def _col(self):
         col = _get_collection(self._persist_dir)
@@ -99,7 +105,7 @@ class SemanticIndex:
     def search(self, query: str, n_results: int = 5, filter_type: str | None = None) -> list[dict]:
         col = self._col()
         if col is None:
-            return []
+            return self._sqlite_fallback(query, n_results, filter_type)
         try:
             where = {"type": filter_type} if filter_type else None
             results = col.query(query_texts=[query], n_results=n_results, where=where)
@@ -112,6 +118,39 @@ class SemanticIndex:
                     "distance": results["distances"][0][i] if results["distances"] else 0,
                 })
             return out
+        except Exception:
+            return self._sqlite_fallback(query, n_results, filter_type)
+
+    def _sqlite_fallback(self, query: str, n_results: int, filter_type: str | None) -> list[dict]:
+        """LIKE-based full-text search over SQLite memory_entries table."""
+        if self._store is None:
+            return []
+        try:
+            entries = self._store.get_all_entries(limit=200)
+            # Filter by memory_type if a type filter is requested
+            if filter_type == "memory_entry" or filter_type is None:
+                pass  # include all entry types
+            else:
+                entries = []  # episode_task/episode_plan filters need ChromaDB
+
+            # Simple substring match across content
+            keywords = [w.lower() for w in query.split() if len(w) > 3]
+            scored = []
+            for entry in entries:
+                text = entry.content.lower()
+                score = sum(1 for kw in keywords if kw in text)
+                if score > 0:
+                    scored.append((score, entry))
+            scored.sort(key=lambda x: x[0], reverse=True)
+            return [
+                {
+                    "id": f"mem-{e.entry_id}",
+                    "content": e.content,
+                    "metadata": {"memory_type": e.memory_type, "entry_id": e.entry_id},
+                    "distance": 1.0,  # no similarity score available
+                }
+                for _, e in scored[:n_results]
+            ]
         except Exception:
             return []
 

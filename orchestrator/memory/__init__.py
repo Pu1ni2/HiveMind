@@ -28,7 +28,10 @@ class MemoryManager:
     def __init__(self, data_dir: str = "data"):
         os.makedirs(data_dir, exist_ok=True)
         self.store = MemoryStore(db_path=os.path.join(data_dir, "hivemind_memory.db"))
-        self.index = SemanticIndex(persist_dir=os.path.join(data_dir, "hivemind_vectors"))
+        self.index = SemanticIndex(
+            persist_dir=os.path.join(data_dir, "hivemind_vectors"),
+            store=self.store,
+        )
         self.long_term = LongTermMemory(self.store, self.index)
 
         # Per-run state (created fresh in begin_run)

@@ -165,7 +165,7 @@ LLM generates code (GPT-4o, temp=0, max_tokens=2048)
 ast.parse()  ← SyntaxError → retry with error
     │
     ▼
-ASTSafetyVisitor  ← forbidden import/call → retry with reason
+_is_safe(code)  ← walks AST via ast.walk(), checks _FORBIDDEN_MODULES + _FORBIDDEN_CALLS → retry with reason
     │
     ▼
 exec(code, {**CAPABILITY_NAMESPACE})  ← runtime error → retry
@@ -178,6 +178,9 @@ _make_safe_wrapper()  ← all exceptions → return error string
     │
     ▼
 StructuredTool.from_function()
+    │
+    ▼  (if all retries fail)
+_make_stub_tool(name, description)  ← inert stub inserted; agent receives descriptive error string instead of crashing
 ```
 
 The `CAPABILITY_NAMESPACE` populated into the exec namespace contains the 13 capability functions. Generated code can call `search_web()`, `save_file()`, `compute()` etc. without importing anything — they're already in scope.

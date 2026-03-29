@@ -89,10 +89,6 @@ def run_task(task: str, mcp_servers: dict | None = None, event_bus: EventBus | N
     agents_spec = plan.get("agents", [])
     print(f"\n  Plan approved: {len(agents_spec)} agent(s)")
 
-    # Record plan in memory
-    if memory is not None and memory.recorder:
-        memory.recorder.record_plan(plan)
-
     # ── Load MCP tools (if configured) ──────────────────────────────
     mcp_tools = load_mcp_tools(mcp_servers)
 

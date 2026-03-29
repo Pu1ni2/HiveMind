@@ -94,7 +94,7 @@ def forge_tools_for_plan(plan: dict) -> dict[str, list[StructuredTool]]:
                     with cache_lock:
                         tool_cache[name] = tool
 
-    # Assign cached tools to agents
+    # Assign cached tools to agents; insert stubs for any that failed
     for agent_spec in plan.get("agents", []):
         agent_id = agent_spec["id"]
         tools = []
@@ -102,11 +102,32 @@ def forge_tools_for_plan(plan: dict) -> dict[str, list[StructuredTool]]:
             name = tool_spec["name"]
             if name in tool_cache:
                 tools.append(tool_cache[name])
+            else:
+                stub = _make_stub_tool(name, tool_spec.get("description", name))
+                tools.append(stub)
+                print(f"[FORGE] {agent_id}: stub inserted for failed tool '{name}'")
         agent_tools[agent_id] = tools
         print(f"[FORGE] {agent_id}: {len(tools)} tool(s) ready")
 
     emit("forge_complete", {"total_tools": sum(len(t) for t in agent_tools.values())})
     return agent_tools
+
+
+def _make_stub_tool(name: str, description: str) -> StructuredTool:
+    """Return an inert stub tool used when forge fails after all retries.
+
+    The stub is callable and returns a descriptive error string so the
+    agent can continue and explain the gap rather than crash.
+    """
+    def stub(**kwargs) -> str:  # noqa: ANN202
+        return (
+            f"[Tool '{name}' could not be forged — all generation attempts failed. "
+            "Please complete this step using your general knowledge.]"
+        )
+
+    stub.__name__ = name
+    stub.__doc__ = description or f"Stub for unforged tool: {name}"
+    return StructuredTool.from_function(func=stub, name=name, description=stub.__doc__)
 
 
 def _forge_single_tool(spec: dict, model: ChatOpenAI) -> StructuredTool | None:
