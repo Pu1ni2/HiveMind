@@ -1,0 +1,4 @@
+CHAT_MODEL = "llama3.1:8b"
+MANAGER_MODEL = "llama3.1:8b"
+MAX_ACTIVE_SEGMENTS = 3
+DEBUG = True
