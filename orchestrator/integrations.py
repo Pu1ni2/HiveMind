@@ -11,6 +11,7 @@ All functions are designed to:
   3. Return strings (consumed by agents as text)
 """
 
+import html as html_module
 import os
 import re
 import json
@@ -88,7 +89,7 @@ def send_email(
         if cc:
             all_recipients += [addr.strip() for addr in cc.split(",")]
 
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
             server.starttls()
             server.login(SMTP_USER, SMTP_PASS)
             server.sendmail(SMTP_FROM, all_recipients, msg.as_string())
@@ -493,27 +494,34 @@ def create_kanban_board(
 
     Returns: path to the saved HTML file.
     """
+    # Escape all user-controlled strings before embedding in HTML to prevent XSS.
+    safe_title = html_module.escape(title)
+
     cols_html = ""
     for col in columns:
         cards_html = ""
         for card in col.get("cards", []):
-            tag_html = f'<span class="card-tag">{card.get("tag", "")}</span>' if card.get("tag") else ""
+            card_title = html_module.escape(str(card.get("title", "")))
+            card_desc = html_module.escape(str(card.get("desc", "")))
+            card_tag = html_module.escape(str(card.get("tag", "")))
+            tag_html = f'<span class="card-tag">{card_tag}</span>' if card_tag else ""
             cards_html += f"""
             <div class="card" draggable="true">
-                <div class="card-title">{card.get('title', '')}</div>
-                <div class="card-desc">{card.get('desc', '')}</div>
+                <div class="card-title">{card_title}</div>
+                <div class="card-desc">{card_desc}</div>
                 {tag_html}
             </div>"""
 
+        col_name = html_module.escape(str(col.get("name", "Column")))
         cols_html += f"""
         <div class="column" ondragover="event.preventDefault()" ondrop="drop(event)">
-            <div class="col-header">{col.get('name', 'Column')} <span class="col-count">{len(col.get('cards', []))}</span></div>
+            <div class="col-header">{col_name} <span class="col-count">{len(col.get('cards', []))}</span></div>
             <div class="cards">{cards_html}</div>
         </div>"""
 
     html = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>{title} — HIVEMIND Board</title>
+<title>{safe_title} — HIVEMIND Board</title>
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
 body{{font-family:'Segoe UI',system-ui,sans-serif;background:#0a0a0b;color:#e4e4e7;min-height:100vh;padding:32px}}
@@ -530,7 +538,7 @@ h1{{font-size:1.5rem;font-weight:700;margin-bottom:24px;background:linear-gradie
 .card-desc{{font-size:.78rem;color:#71717a;line-height:1.5}}
 .card-tag{{display:inline-block;margin-top:8px;padding:2px 8px;font-size:.68rem;font-weight:600;background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.15);border-radius:99px;color:#818cf8}}
 </style></head><body>
-<h1>{title}</h1>
+<h1>{safe_title}</h1>
 <div class="board">{cols_html}</div>
 <script>
 let dragged=null;

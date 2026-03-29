@@ -8,12 +8,13 @@ When the DA creates an agent with type "rag", this engine:
 """
 
 from __future__ import annotations
+import hashlib
 import os
 import re
-import uuid
 import json
 import csv
 import io
+import threading
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -21,35 +22,50 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from .config import OPENAI_API_KEY
 from .capabilities import OUTPUT_DIR
 
-# Per-agent RAG collections
+# Thread-safe per-agent RAG collections
 _agent_collections: dict[str, object] = {}
+_collections_lock = threading.Lock()
 _chroma_client = None
+_chroma_lock = threading.Lock()
+
+# Relevance threshold: cosine distance > this value means the chunk is
+# too dissimilar to the query and should be excluded from context.
+_RELEVANCE_THRESHOLD = 0.7  # cosine distance (0=identical, 2=opposite)
 
 
 def _get_chroma():
     global _chroma_client
-    if _chroma_client is not None:
-        return _chroma_client
-    try:
-        import chromadb
-        os.makedirs("data", exist_ok=True)
-        _chroma_client = chromadb.PersistentClient(path="data/hivemind_rag")
-        return _chroma_client
-    except ImportError:
-        return None
+    with _chroma_lock:
+        if _chroma_client is not None:
+            return _chroma_client
+        try:
+            import chromadb
+            os.makedirs("data", exist_ok=True)
+            _chroma_client = chromadb.PersistentClient(path="data/hivemind_rag")
+            return _chroma_client
+        except ImportError:
+            return None
+        except Exception:
+            return None
 
 
 def _get_collection(agent_id: str):
-    """Get or create a ChromaDB collection for an agent."""
-    if agent_id in _agent_collections:
-        return _agent_collections[agent_id]
-    client = _get_chroma()
-    if client is None:
-        return None
-    col_name = f"rag_{agent_id.replace('-', '_')[:50]}"
-    col = client.get_or_create_collection(name=col_name, metadata={"hnsw:space": "cosine"})
-    _agent_collections[agent_id] = col
-    return col
+    """Get or create a ChromaDB collection for an agent (thread-safe)."""
+    with _collections_lock:
+        if agent_id in _agent_collections:
+            return _agent_collections[agent_id]
+        client = _get_chroma()
+        if client is None:
+            return None
+        col_name = f"rag_{agent_id.replace('-', '_')[:50]}"
+        col = client.get_or_create_collection(name=col_name, metadata={"hnsw:space": "cosine"})
+        _agent_collections[agent_id] = col
+        return col
+
+
+def _content_hash(content_bytes: bytes) -> str:
+    """SHA-256 hex digest of file content, used for deduplication."""
+    return hashlib.sha256(content_bytes).hexdigest()[:16]
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -92,8 +108,11 @@ def process_upload(agent_id: str, filename: str, content_bytes: bytes) -> dict:
             return {"status": "error", "chunks": 0, "filename": filename,
                     "message": "ChromaDB not available. Install with: pip install chromadb"}
 
-        ids = [f"{filename}_{i}" for i in range(len(chunks))]
-        metadatas = [{"filename": filename, "chunk_index": i, "total_chunks": len(chunks)} for i in range(len(chunks))]
+        # Use content hash in IDs so re-uploading the same file overwrites
+        # existing chunks rather than creating duplicates.
+        file_hash = _content_hash(content_bytes)
+        ids = [f"{file_hash}_{i}" for i in range(len(chunks))]
+        metadatas = [{"filename": filename, "chunk_index": i, "total_chunks": len(chunks), "file_hash": file_hash} for i in range(len(chunks))]
 
         # Upsert in batches (ChromaDB has batch limits)
         batch_size = 40
@@ -182,10 +201,20 @@ def _extract_csv(content_bytes: bytes) -> str:
 
 
 def _chunk_text(text: str, chunk_size: int = 800, overlap: int = 100) -> list[str]:
-    """Split text into overlapping chunks."""
+    """Split text into chunks with proper context-preserving overlap.
+
+    Strategy:
+    1. Split by paragraph boundaries first to preserve natural structure.
+    2. If a paragraph exceeds chunk_size, split further by sentence boundaries.
+    3. Overlap is implemented by seeding each new chunk with the tail of the
+       previous chunk — the tail text is NOT duplicated within the same chunk,
+       only carried forward as context seed for the next one.
+    """
+    overlap = max(0, min(overlap, chunk_size // 2))  # guard: overlap < half chunk
+
     # Split by paragraphs first
     paragraphs = re.split(r'\n\s*\n', text)
-    chunks = []
+    raw_chunks: list[str] = []
     current_chunk = ""
 
     for para in paragraphs:
@@ -193,37 +222,51 @@ def _chunk_text(text: str, chunk_size: int = 800, overlap: int = 100) -> list[st
         if not para:
             continue
 
-        if len(current_chunk) + len(para) < chunk_size:
+        if len(current_chunk) + len(para) + 2 <= chunk_size:
             current_chunk += ("\n\n" + para if current_chunk else para)
         else:
             if current_chunk:
-                chunks.append(current_chunk)
-            # If paragraph itself is too long, split by sentences
+                raw_chunks.append(current_chunk)
+            # If the paragraph itself is too long, split by sentences
             if len(para) > chunk_size:
                 sentences = re.split(r'(?<=[.!?])\s+', para)
                 current_chunk = ""
                 for sent in sentences:
-                    if len(current_chunk) + len(sent) < chunk_size:
+                    sent = sent.strip()
+                    if not sent:
+                        continue
+                    if len(current_chunk) + len(sent) + 1 <= chunk_size:
                         current_chunk += (" " + sent if current_chunk else sent)
                     else:
                         if current_chunk:
-                            chunks.append(current_chunk)
-                        current_chunk = sent
+                            raw_chunks.append(current_chunk)
+                        # Sentence longer than chunk_size: hard split
+                        if len(sent) > chunk_size:
+                            for start in range(0, len(sent), chunk_size):
+                                raw_chunks.append(sent[start:start + chunk_size])
+                            current_chunk = ""
+                        else:
+                            current_chunk = sent
             else:
                 current_chunk = para
 
     if current_chunk:
-        chunks.append(current_chunk)
+        raw_chunks.append(current_chunk)
 
-    # Add overlap
-    if overlap > 0 and len(chunks) > 1:
-        overlapped = [chunks[0]]
-        for i in range(1, len(chunks)):
-            prev_tail = chunks[i - 1][-overlap:] if len(chunks[i - 1]) > overlap else chunks[i - 1]
-            overlapped.append(prev_tail + " " + chunks[i])
-        chunks = overlapped
+    if not raw_chunks:
+        return [text[:chunk_size]] if text.strip() else []
 
-    return chunks if chunks else [text[:chunk_size]]
+    # Add overlap: each chunk[i] is seeded with the tail of chunk[i-1].
+    # This gives the retriever context continuity without duplicating text
+    # inside any single chunk.
+    if overlap > 0 and len(raw_chunks) > 1:
+        overlapped = [raw_chunks[0]]
+        for i in range(1, len(raw_chunks)):
+            tail = raw_chunks[i - 1][-overlap:]
+            overlapped.append(tail + " " + raw_chunks[i])
+        return overlapped
+
+    return raw_chunks
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -263,10 +306,23 @@ def query_rag(
     if not chunks:
         return {"answer": "No relevant content found in the uploaded documents.", "sources": [], "status": "no_results"}
 
+    # Filter out chunks that are too dissimilar to the query.
+    # ChromaDB uses cosine distance (0=identical, 2=opposite); threshold 0.7
+    # excludes chunks with < 30% similarity — avoids hallucination from noise.
+    filtered = [
+        (chunk, meta, dist)
+        for chunk, meta, dist in zip(chunks, metadatas, distances)
+        if dist <= _RELEVANCE_THRESHOLD
+    ]
+    if not filtered:
+        # All chunks exceeded threshold — fall back to top result rather than
+        # returning empty (some answer is better than none for RAG queries).
+        filtered = [(chunks[0], metadatas[0], distances[0])]
+
     # Build context
     context_parts = []
     sources = []
-    for i, (chunk, meta, dist) in enumerate(zip(chunks, metadatas, distances)):
+    for i, (chunk, meta, dist) in enumerate(filtered):
         context_parts.append(f"[Source {i+1}: {meta.get('filename', '?')}, chunk {meta.get('chunk_index', '?')}]\n{chunk}")
         sources.append({
             "filename": meta.get("filename", "?"),
